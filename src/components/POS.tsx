@@ -1855,9 +1855,9 @@ Thank you for your business!`;
               </div>
               <div className="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded-xl">
                 {[
-                  { key: 'a4-half', label: 'Continuous Form (Dot Matrix / Half Sheet)' },
-                  { key: 'thermal', label: '80mm Thermal (POS Roll)' },
-                  { key: 'a4', label: 'Standard A4 (Full Sheet)' },
+                  { key: 'a4-half', label: 'A4 Half (Landscape)' },
+                  { key: 'thermal', label: '80mm Thermal' },
+                  { key: 'a4', label: 'Standard A4' },
                   { key: 'a5', label: 'A5 Portrait' },
                 ].map((tab) => (
                   <button
