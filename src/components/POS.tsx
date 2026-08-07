@@ -376,7 +376,8 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
 
   // Print modal handles
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [showPrintModal, setShowPrintModal] = useState<string | null>(null); // 'thermal' | 'a4' | null
+  const [showPrintModal, setShowPrintModal] = useState<string | null>(null); // 'thermal' | 'a4' | 'a4-half' | 'a5' | null
+  const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
 
   const invoiceBranchInfo = useMemo(() => {
     if (!selectedInvoice) return { address: companySetting?.address || '', phone: companySetting?.phone || '' };
@@ -1068,13 +1069,19 @@ Thank you for your business!`;
     setAuthRefundInvoice(null);
   };
 
-  const handlePrint = (elementId: string, format: string) => {
+  const handlePrint = (elementId: string, format: string, orientationOverride?: 'portrait' | 'landscape') => {
+    const orientation = orientationOverride || printOrientation;
     let printStyle = '';
     
     const commonPrintCSS = `
       @media print {
         html, body {
           background-color: #ffffff !important;
+          background: #ffffff !important;
+          color: #000000 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
         }
         * {
           background: #ffffff !important;
@@ -1108,35 +1115,64 @@ Thank you for your business!`;
     } else if (format === 'a5') {
       printStyle = `
         @media print {
-          @page { size: 148.5mm 210mm; margin: 5mm; }
-          body { width: 148.5mm; padding: 5mm; margin: 0; }
-          th { border-bottom: 2px solid #000000 !important; font-size: 14px !important; font-weight: bold !important; }
-          td { border-bottom: 1px dashed #000000 !important; font-size: 14px !important; font-weight: bold !important; }
+          @page { size: 148.5mm 210mm portrait; margin: 4mm; }
+          body { width: 148.5mm; padding: 4mm; margin: 0; }
+          th { border-bottom: 2px solid #000000 !important; font-size: 13px !important; font-weight: bold !important; }
+          td { border-bottom: 1px dashed #000000 !important; font-size: 13px !important; font-weight: bold !important; }
         }
       `;
     } else if (format === 'a4-half') {
-      printStyle = `
-        @media print {
-          @page { size: 210mm 148.5mm; margin: 0; }
-          body { 
-            width: 210mm;
-            height: 148.5mm;
-            margin: 0; 
-            padding: 0;
+      // Continuous / Dot Matrix Half Sheet (8.5" x 5.5" / 210mm x 140mm)
+      // When orientation is portrait (standard feed): size: auto ensures NO 90-degree browser rotation!
+      if (orientation === 'landscape') {
+        printStyle = `
+          @media print {
+            @page { size: landscape; margin: 4mm; }
+            body { 
+              width: 100% !important;
+              margin: 0 !important; 
+              padding: 0 !important;
+            }
+            #a4-half-invoice-display-area {
+              width: 200mm !important;
+              max-width: 100% !important;
+              margin: 0 auto !important;
+              padding: 4mm 8mm !important;
+              box-sizing: border-box !important;
+            }
           }
-          #a4-half-invoice-display-area {
-            width: 210mm !important;
-            height: 148.5mm !important;
-            padding: 8mm 12mm !important;
-            box-sizing: border-box !important;
+        `;
+      } else {
+        printStyle = `
+          @media print {
+            @page { 
+              size: auto; /* Portrait feed across continuous paper - NO 90-degree sideways rotation */
+              margin: 0mm; 
+            }
+            body { 
+              width: 100% !important;
+              margin: 0 !important; 
+              padding: 0 !important;
+            }
+            #a4-half-invoice-display-area {
+              width: 200mm !important;
+              max-width: 100% !important;
+              min-height: 130mm !important;
+              max-height: 138mm !important; /* Fits standard 5.5 inch continuous page tear-off */
+              margin: 0 auto !important;
+              padding: 4mm 8mm !important;
+              box-sizing: border-box !important;
+              page-break-inside: avoid !important;
+              page-break-after: avoid !important;
+            }
           }
-        }
-      `;
+        `;
+      }
     } else {
       printStyle = `
         @media print {
           @page { size: A4 portrait; margin: 8mm; }
-          body { padding: 15px; width: 100%; }
+          body { padding: 12px; width: 100%; }
         }
       `;
     }
@@ -1149,8 +1185,7 @@ Thank you for your business!`;
         #a5-invoice-display-area {
           border: none !important;
           border-width: 0px !important;
-          padding: 0 !important;
-          margin: 0 !important;
+          margin: 0 auto !important;
         }
       }
     `;
@@ -1820,11 +1855,10 @@ Thank you for your business!`;
               </div>
               <div className="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded-xl">
                 {[
-                  { key: 'thermal', label: '80mm Thermal' },
-                  { key: 'a4', label: 'Standard A4' },
-                  { key: 'a4-half', label: 'A4 Half (Landscape)' },
-                  
-                  
+                  { key: 'a4-half', label: 'Continuous Form (Dot Matrix / Half Sheet)' },
+                  { key: 'thermal', label: '80mm Thermal (POS Roll)' },
+                  { key: 'a4', label: 'Standard A4 (Full Sheet)' },
+                  { key: 'a5', label: 'A5 Portrait' },
                 ].map((tab) => (
                   <button
                     key={tab.key}
@@ -1839,6 +1873,35 @@ Thank you for your business!`;
                   </button>
                 ))}
               </div>
+
+              {/* Orientation selector for printer drivers */}
+              <div className="flex items-center justify-between pt-1 px-1">
+                <span className="text-[10px] font-semibold text-zinc-500">Feed Orientation:</span>
+                <div className="flex gap-1 bg-zinc-100 p-0.5 rounded-lg text-[10px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPrintOrientation('portrait')}
+                    className={`px-2 py-0.5 rounded transition-all ${printOrientation === 'portrait' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-500 hover:text-zinc-900'}`}
+                    title="Recommended for tractor continuous paper - prints straight without 90 degree sideways rotation"
+                  >
+                    Standard Feed (Portrait)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintOrientation('landscape')}
+                    className={`px-2 py-0.5 rounded transition-all ${printOrientation === 'landscape' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-500 hover:text-zinc-900'}`}
+                    title="Rotates page 90 degrees for landscape-oriented feeds"
+                  >
+                    Landscape (Rotated 90°)
+                  </button>
+                </div>
+              </div>
+
+              {showPrintModal === 'a4-half' && (
+                <div className="bg-amber-50/90 border border-amber-200/80 rounded-xl p-2 text-[10px] text-amber-900 leading-tight">
+                  <strong>💡 Dot Matrix Continuous Paper Tip:</strong> <em>Standard Feed (Portrait)</em> is active to prevent 90° sideways rotation on continuous tractor roll paper. In the browser print dialog, set Margins to <em>&quot;None&quot;</em> or <em>&quot;Default&quot;</em>.
+                </div>
+              )}
             </div>
 
             {/* RENDER DYNAMIC VISUAL FORMATS */}
@@ -2328,7 +2391,7 @@ Thank you for your business!`;
                   if (showPrintModal === 'thermal') targetId = 'thermal-receipt-display-area';
                   else if (showPrintModal === 'a4-half') targetId = 'a4-half-invoice-display-area';
                   else if (showPrintModal === 'a5') targetId = 'a5-invoice-display-area';
-                  handlePrint(targetId, showPrintModal);
+                  handlePrint(targetId, showPrintModal, printOrientation);
                 }}
                 className="flex items-center gap-1.5 bg-indigo-650 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-extrabold tracking-wide transition-all shadow-md animate-pulse"
                 title="Send directly to system physical printer"

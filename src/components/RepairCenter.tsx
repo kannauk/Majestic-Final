@@ -105,7 +105,8 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
   const repairUpdatesList = useMemo(() => [], []);
 
   // Printing Job Card sheets
-  const [showRepairPrintModal, setShowRepairPrintModal] = useState<string | null>(null); // 'thermal' | 'a4' | null
+  const [showRepairPrintModal, setShowRepairPrintModal] = useState<string | null>(null); // 'thermal' | 'a4' | 'a4-half' | 'a5' | null
+  const [repairPrintOrientation, setRepairPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [printingJob, setPrintingJob] = useState<RepairJob | null>(null);
 
   const repairBranchInfo = useMemo(() => {
@@ -119,22 +120,23 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
 
   const handleOpenRepairPrint = (job: RepairJob) => {
     setPrintingJob(job);
-    setShowRepairPrintModal('thermal'); // default thermal ticket
+    setShowRepairPrintModal('a4-half'); // default continuous half-sheet format
   };
 
-  const handlePrintRepair = (elementId: string, format: string) => {
+  const handlePrintRepair = (elementId: string, format: string, orientationOverride?: 'portrait' | 'landscape') => {
+    const orientation = orientationOverride || repairPrintOrientation;
     let printStyle = '';
     if (format === 'thermal') {
       printStyle = `
         @media print {
           @page { size: 80mm auto; margin: 0; }
-          body { padding: 3mm; width: 80mm; }
+          body { padding: 2mm; width: 80mm; }
 
           body { 
-             font-family: 'Courier New', Courier, monospace !important; 
-             color: #000 !important;
+            font-family: 'Courier New', Courier, monospace !important; 
+            color: #000 !important;
             background: transparent !important;
-            font-size: 13px !important;
+            font-size: 11px !important;
             line-height: 1.4 !important;
           }
           * {
@@ -157,56 +159,69 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
           }
         }
       `;
-    } else if (format === 'a4-half') {
+    } else if (format === 'a5') {
       printStyle = `
         @media print {
-          @page { size: 210mm 148.5mm; margin: 4mm; }
-          body { padding: 10px; width: 100%; }
-
-          body { 
-             font-family: 'Courier New', Courier, monospace !important; 
-             color: #000 !important;
-            background: transparent !important;
-            font-size: 14px !important;
-            line-height: 1.4 !important;
-          }
-          * {
-            font-family: 'Courier New', Courier, monospace !important;
-            color: #000 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            text-shadow: none !important;
-            border-color: #000 !important;
-            border-radius: 0 !important;
-          }
-          table, th, td, div, p, span, h1, h2, h3, h4, h5, h6 {
-            color: #000 !important;
-            border-color: #000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          th {
-            font-size: 12px !important;
-            font-weight: 900 !important;
-            border-bottom: 2px solid #000 !important;
-          }
-          td {
-            font-size: 12px !important;
-            border-bottom: 1px dashed #000 !important;
-          }
-          img { filter: grayscale(100%) contrast(1000%); max-width: 100px; height: auto; }
-          svg { stroke: #000 !important; fill: none !important; }
+          @page { size: 148.5mm 210mm portrait; margin: 4mm; }
+          body { width: 148.5mm; padding: 4mm; margin: 0; }
+          th { border-bottom: 2px solid #000000 !important; font-size: 13px !important; font-weight: bold !important; }
+          td { border-bottom: 1px dashed #000000 !important; font-size: 13px !important; font-weight: bold !important; }
         }
       `;
+    } else if (format === 'a4-half') {
+      if (orientation === 'landscape') {
+        printStyle = `
+          @media print {
+            @page { size: landscape; margin: 4mm; }
+            body { 
+              width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            #a4-half-repair-display-area {
+              width: 200mm !important;
+              max-width: 100% !important;
+              margin: 0 auto !important;
+              padding: 4mm 8mm !important;
+              box-sizing: border-box !important;
+            }
+          }
+        `;
+      } else {
+        printStyle = `
+          @media print {
+            @page { 
+              size: auto; /* Portrait continuous feed - NO sideways rotation */
+              margin: 0mm; 
+            }
+            body { 
+              width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            #a4-half-repair-display-area {
+              width: 200mm !important;
+              max-width: 100% !important;
+              min-height: 130mm !important;
+              max-height: 138mm !important;
+              margin: 0 auto !important;
+              padding: 4mm 8mm !important;
+              box-sizing: border-box !important;
+              page-break-inside: avoid !important;
+              page-break-after: avoid !important;
+            }
+          }
+        `;
+      }
     } else {
       printStyle = `
         @media print {
           @page { size: A4 portrait; margin: 8mm; }
-          body { padding: 15px; width: 100%; }
+          body { padding: 12px; width: 100%; }
 
           body { 
-             font-family: 'Courier New', Courier, monospace !important; 
-             color: #000 !important;
+            font-family: 'Courier New', Courier, monospace !important; 
+            color: #000 !important;
             background: transparent !important;
             font-size: 14px !important;
             line-height: 1.4 !important;
@@ -220,47 +235,6 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
             border-color: #000 !important;
             border-radius: 0 !important;
           }
-          
-          /* Dot-Matrix high-impact scaling for carbon-duplicate copying */
-          .text-\\[7px\\], .text-\\[7\\.5px\\], .text-\\[8px\\], .text-\\[8\\.5px\\], .text-\\[9px\\] {
-            font-size: 12px !important;
-            font-weight: bold !important;
-          }
-          .text-\\[10px\\], .text-\\[10\\.5px\\], .text-xs, .text-\\[11px\\], .text-xs * {
-            font-size: 14px !important;
-            font-weight: bold !important;
-          }
-          .text-sm, .text-sm * {
-            font-size: 15px !important;
-            font-weight: bold !important;
-          }
-          .text-base, .text-base * {
-            font-size: 16px !important;
-            font-weight: bold !important;
-          }
-          .text-lg, .text-lg *, .text-xl, .text-xl *, .text-2xl, .text-2xl * {
-            font-size: 19px !important;
-            font-weight: 900 !important;
-          }
-          
-          table, th, td, div, p, span, h1, h2, h3, h4, h5, h6 {
-            color: #000 !important;
-            border-color: #000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          
-          th {
-            font-size: 13px !important;
-            font-weight: 900 !important;
-            border-bottom: 2px solid #000 !important;
-          }
-          td {
-            font-size: 13px !important;
-            border-bottom: 1px dashed #000 !important;
-          }
-          img { filter: grayscale(100%) contrast(1000%); max-width: 100px; height: auto; }
-          svg { stroke: #000 !important; fill: none !important; }
         }
       `;
     }
@@ -273,12 +247,7 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
         #a5-repair-display-area {
           border: none !important;
           border-width: 0px !important;
-          box-shadow: none !important;
-          background: transparent !important;
-          padding: 0 !important;
-          margin: 0 !important;
-          width: 100% !important;
-          max-width: 100% !important;
+          margin: 0 auto !important;
         }
       }
     `;
@@ -1120,11 +1089,10 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
               </div>
               <div className="flex flex-wrap gap-1 bg-zinc-100 p-1 rounded-xl">
                 {[
-                  { key: 'thermal', label: '80mm Thermal' },
-                  { key: 'a4', label: 'Standard A4' },
-                  { key: 'a4-half', label: 'A4 Half (Landscape)' },
-                  
-                  
+                  { key: 'a4-half', label: 'Continuous Form (Dot Matrix / Half Sheet)' },
+                  { key: 'thermal', label: '80mm Thermal (POS Roll)' },
+                  { key: 'a4', label: 'Standard A4 (Full Sheet)' },
+                  { key: 'a5', label: 'A5 Portrait' },
                 ].map((tab) => (
                   <button
                     key={tab.key}
@@ -1139,6 +1107,35 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                   </button>
                 ))}
               </div>
+
+              {/* Orientation selector */}
+              <div className="flex items-center justify-between pt-1 px-1">
+                <span className="text-[10px] font-semibold text-zinc-500">Feed Orientation:</span>
+                <div className="flex gap-1 bg-zinc-100 p-0.5 rounded-lg text-[10px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setRepairPrintOrientation('portrait')}
+                    className={`px-2 py-0.5 rounded transition-all ${repairPrintOrientation === 'portrait' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-500 hover:text-zinc-900'}`}
+                    title="Recommended for tractor continuous paper - prints straight without 90 degree sideways rotation"
+                  >
+                    Standard Feed (Portrait)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRepairPrintOrientation('landscape')}
+                    className={`px-2 py-0.5 rounded transition-all ${repairPrintOrientation === 'landscape' ? 'bg-white text-zinc-900 shadow-xs' : 'text-zinc-500 hover:text-zinc-900'}`}
+                    title="Rotates page 90 degrees for landscape-oriented feeds"
+                  >
+                    Landscape (Rotated 90°)
+                  </button>
+                </div>
+              </div>
+
+              {showRepairPrintModal === 'a4-half' && (
+                <div className="bg-amber-50/90 border border-amber-200/80 rounded-xl p-2 text-[10px] text-amber-900 leading-tight">
+                  <strong>💡 Dot Matrix Continuous Paper Tip:</strong> <em>Standard Feed (Portrait)</em> is active to prevent 90° sideways rotation on continuous tractor roll paper. In the browser print dialog, set Margins to <em>&quot;None&quot;</em> or <em>&quot;Default&quot;</em>.
+                </div>
+              )}
             </div>
 
             {/* PRINT RENDERING CANVAS */}
@@ -1452,7 +1449,7 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                   if (showRepairPrintModal === 'thermal') targetId = 'thermal-repair-display-area';
                   else if (showRepairPrintModal === 'a4-half') targetId = 'a4-half-repair-display-area';
                   else if (showRepairPrintModal === 'a5') targetId = 'a5-repair-display-area';
-                  handlePrintRepair(targetId, showRepairPrintModal);
+                  handlePrintRepair(targetId, showRepairPrintModal, repairPrintOrientation);
                 }}
                 className="flex items-center gap-1.5 bg-indigo-650 hover:bg-indigo-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-extrabold tracking-wide transition-all shadow-md animate-pulse"
                 title="Send directly to system physical printer"

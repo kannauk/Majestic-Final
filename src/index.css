@@ -156,8 +156,6 @@
 /* ==========================================================================
    Sophisticated Dark Theme Overwrites
    ========================================================================== */
-@media screen {
-
 
 /* Universal Background & Text Controls */
 body, html {
@@ -423,19 +421,40 @@ option {
   background: var(--bg-card);
 }
 
-}
-
-/* Global Print Preview Exceptions */
+/* Global Print Preview & Output Rules */
 .invoice-table {
   background-color: #ffffff !important;
+  border-collapse: collapse !important;
+  width: 100% !important;
 }
 .invoice-table thead {
   background-color: #ffffff !important;
 }
 .invoice-table td, .invoice-table th {
   color: #000000 !important;
+  background-color: #ffffff !important;
 }
 .invoice-table tbody, .invoice-table tr {
   background-color: #ffffff !important;
   color: #000000 !important;
+}
+
+@media print {
+  html, body {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  #global-print-container-wrapper,
+  #global-print-container-wrapper * {
+    color: #000000 !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }

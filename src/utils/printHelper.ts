@@ -22,11 +22,34 @@ export const globalPrint = (elementId: string, printStyle: string) => {
   
   styleElement.innerHTML = `
     @media print {
+      html, body {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
       body > *:not(#${printContainerId}) {
         display: none !important;
       }
       #${printContainerId} {
         display: block !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+      }
+      #${printContainerId} * {
+        color: #000000 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
     }
     @media screen {
@@ -41,9 +64,11 @@ export const globalPrint = (elementId: string, printStyle: string) => {
     window.print();
     setTimeout(() => {
       printContainer.innerHTML = '';
-      if (styleElement.parentNode) styleElement.parentNode.removeChild(styleElement);
+      if (styleElement && styleElement.parentNode) {
+        styleElement.parentNode.removeChild(styleElement);
+      }
     }, 1000);
-  }, 100);
+  }, 120);
 };
 
 export const globalPrintHTML = (htmlContent: string) => {
@@ -81,11 +106,34 @@ export const globalPrintHTML = (htmlContent: string) => {
   
   styleElement.innerHTML = `
     @media print {
+      html, body {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
       body > *:not(#${printContainerId}) {
         display: none !important;
       }
       #${printContainerId} {
         display: block !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+      }
+      #${printContainerId} * {
+        color: #000000 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
       }
     }
     @media screen {
@@ -100,7 +148,9 @@ export const globalPrintHTML = (htmlContent: string) => {
     window.print();
     setTimeout(() => {
       printContainer.innerHTML = '';
-      if (styleElement.parentNode) styleElement.parentNode.removeChild(styleElement);
+      if (styleElement && styleElement.parentNode) {
+        styleElement.parentNode.removeChild(styleElement);
+      }
     }, 1000);
-  }, 100);
+  }, 120);
 };
