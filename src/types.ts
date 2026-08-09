@@ -134,6 +134,42 @@ export interface InvoiceItem {
   total: number;
 }
 
+export type QuotationStatus = 'draft' | 'pending' | 'accepted' | 'converted' | 'expired' | 'rejected';
+
+export interface QuotationItem {
+  id: string;
+  quotation_id: string;
+  product_id: string;
+  product_name: string;
+  sku: string;
+  unit_price: number;
+  quantity: number;
+  discount: number;
+  total: number;
+}
+
+export interface Quotation {
+  id: string;
+  quotation_no: string;
+  branch_id: string;
+  branch_name: string;
+  customer_id?: string;
+  customer_name: string;
+  customer_phone?: string;
+  customer_email?: string;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  valid_until: string;
+  status: QuotationStatus;
+  created_by_name: string;
+  created_at: string;
+  notes?: string;
+  terms_conditions?: string;
+  quotation_items?: QuotationItem[];
+}
+
 export type RepairStatus = 
   | 'received' 
   | 'diagnosing' 

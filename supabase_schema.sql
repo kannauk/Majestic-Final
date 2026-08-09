@@ -281,4 +281,66 @@ CREATE TABLE IF NOT EXISTS customer_receipts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- ============================================================
+-- Sales Quotations & Quotation Items (Latest POS Module Update)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS quotations (
+  id VARCHAR(100) PRIMARY KEY,
+  quotation_no VARCHAR(100) UNIQUE NOT NULL,
+  branch_id VARCHAR(100),
+  branch_name VARCHAR(255),
+  customer_id VARCHAR(100),
+  customer_name VARCHAR(255),
+  customer_phone VARCHAR(50),
+  customer_email VARCHAR(255),
+  subtotal DECIMAL(12, 2) DEFAULT 0,
+  discount DECIMAL(12, 2) DEFAULT 0,
+  tax DECIMAL(12, 2) DEFAULT 0,
+  total DECIMAL(12, 2) DEFAULT 0,
+  valid_until DATE,
+  status VARCHAR(50) DEFAULT 'pending',
+  created_by_name VARCHAR(255),
+  notes TEXT,
+  terms_conditions TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS quotation_items (
+  id VARCHAR(100) PRIMARY KEY,
+  quotation_id VARCHAR(100) REFERENCES quotations(id) ON DELETE CASCADE,
+  product_id VARCHAR(100),
+  product_name VARCHAR(255),
+  sku VARCHAR(100),
+  unit_price DECIMAL(12, 2) DEFAULT 0,
+  quantity INTEGER DEFAULT 1,
+  discount DECIMAL(12, 2) DEFAULT 0,
+  total DECIMAL(12, 2) DEFAULT 0
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_quotations_branch ON quotations(branch_id);
+CREATE INDEX IF NOT EXISTS idx_quotations_customer ON quotations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(status);
+CREATE INDEX IF NOT EXISTS idx_quotation_items_qid ON quotation_items(quotation_id);
+
+-- Row Level Security (RLS) Policies
+ALTER TABLE quotations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quotation_items ENABLE ROW LEVEL SECURITY;
+
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'quotations' AND policyname = 'Allow full access for quotations'
+  ) THEN
+    CREATE POLICY "Allow full access for quotations" ON quotations FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'quotation_items' AND policyname = 'Allow full access for quotation_items'
+  ) THEN
+    CREATE POLICY "Allow full access for quotation_items" ON quotation_items FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+
 -- Default Super Admin role and branch can be seeded separately.

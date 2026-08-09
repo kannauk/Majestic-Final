@@ -5,7 +5,8 @@ import {
   Wrench, Plus, User, Phone, Laptop, Calendar, DollarSign, 
   Clock, CheckCircle, ArrowRight, MessageSquare, Paperclip, 
   Printer, Smartphone, Search, FileText, CheckCircle2, ShieldCheck, 
-  MapPin, Edit, Eye, MessageCircle, PenTool, Download, Image as ImageIcon
+  MapPin, Edit, Eye, MessageCircle, PenTool, Download, Image as ImageIcon,
+  AlertCircle
 } from 'lucide-react';
 import { User as UserType, Branch, RepairJob, RepairStatus, RepairUpdate, WarrantyPeriod } from '../types';
 import { getUsers } from '../services/users';
@@ -636,6 +637,29 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                   </div>
                 </div>
 
+                {/* Problem Description & Notes (Prominent & readable) */}
+                <div className="border border-amber-200/90 bg-amber-50/70 p-4 rounded-2xl space-y-1">
+                  <span className="text-xs text-amber-900 uppercase tracking-wider font-extrabold flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    Reported Problem / Fault Description:
+                  </span>
+                  <p className="text-sm font-semibold text-zinc-900 leading-relaxed pl-1 pt-1">
+                    {selectedJob.problem_desc}
+                  </p>
+                </div>
+
+                {selectedJob.notes && (
+                  <div className="border border-zinc-200 bg-zinc-50/80 p-4 rounded-2xl space-y-1">
+                    <span className="text-xs text-zinc-600 uppercase tracking-wider font-extrabold flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-zinc-500" />
+                      Additional Intake Notes:
+                    </span>
+                    <p className="text-sm font-medium text-zinc-800 leading-relaxed pl-1 pt-1">
+                      {selectedJob.notes}
+                    </p>
+                  </div>
+                )}
+
                 {/* Received Accessories & Drawing confirmations */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div className="border border-zinc-150 p-3 rounded-2xl bg-zinc-50/40">
@@ -683,13 +707,13 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                           {/* Circle dot marker */}
                           <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-zinc-950 border border-white" />
                           <div className="flex justify-between items-start">
-                            <span className="font-bold text-zinc-900 uppercase text-[10px]">
+                            <span className="font-bold text-zinc-900 uppercase text-[11px] bg-zinc-100 px-1.5 py-0.5 rounded border border-zinc-200">
                               [{upd.status}]
                             </span>
-                            <span className="text-[10px] text-zinc-400">{upd.updated_at.replace('T', ' ').substring(11, 16)}</span>
+                            <span className="text-xs font-semibold text-zinc-500">{upd.updated_at.replace('T', ' ').substring(11, 16)}</span>
                           </div>
-                          <p className="text-zinc-650 mt-1 text-[11px] leading-relaxed">{upd.notes}</p>
-                          <div className="text-[10px] text-zinc-400 italic mt-0.5">By {upd.updated_by_name}</div>
+                          <p className="text-zinc-900 mt-1.5 text-sm font-medium leading-relaxed bg-white p-2.5 rounded-xl border border-zinc-200 shadow-2xs">{upd.notes}</p>
+                          <div className="text-[11px] text-zinc-500 font-medium italic mt-1">Logged by: {upd.updated_by_name}</div>
                         </div>
                     ))}
                   </div>
@@ -1033,26 +1057,30 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                     </span>
                   </div>
 
-                  <div className="space-y-1 leading-normal">
+                  <div className="space-y-1.5 leading-normal text-xs">
                     <div><strong>Customer Name:</strong> {portalResult.customer_name}</div>
                     <div><strong>Device details:</strong> {portalResult.brand} {portalResult.model}</div>
                     <div><strong>Received Location:</strong> {portalResult.branch_name}</div>
                     <div><strong>Warranty Cover:</strong> {portalResult.warranty_period === 'none' ? 'None' : portalResult.warranty_period.replace('_', ' ')}</div>
                     <div><strong>Actual repair cost:</strong> Rs. {portalResult.actual_cost ? portalResult.actual_cost.toLocaleString() : portalResult.estimated_cost.toLocaleString()}</div>
+                    <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-xl mt-2 text-sm text-zinc-900 font-semibold">
+                      <span className="text-xs text-amber-800 uppercase tracking-wider block font-bold mb-0.5">Problem Reported:</span>
+                      {portalResult.problem_desc}
+                    </div>
                   </div>
 
                   {/* Progressive Timeline logs list */}
                   <div className="bg-zinc-50/50 p-4 border rounded-2xl relative space-y-3">
-                    <span className="font-bold text-[10px] uppercase text-zinc-450 block">Device Processing timeline:</span>
-                    <div className="relative border-l pl-3 ml-1 text-[11px] space-y-2">
+                    <span className="font-bold text-xs uppercase text-zinc-600 block">Device Processing timeline:</span>
+                    <div className="relative border-l-2 border-zinc-200 pl-3.5 ml-1 text-xs space-y-3">
                       {repairUpdatesList
                         .filter(u => u.repair_id === portalResult.id)
                         .map((u, idx) => (
                           <div key={idx} className="relative">
-                            <div className="absolute -left-[16px] top-1 w-2 h-2 rounded-full bg-zinc-950" />
-                            <span className="font-bold capitalize text-zinc-900">[{u.status}]</span>
-                            <p className="text-zinc-650 mt-0.5">{u.notes}</p>
-                            <span className="text-[9px] text-zinc-400 block mt-0.5">{u.updated_at.split('T')[0]}</span>
+                            <div className="absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full bg-zinc-950 border border-white" />
+                            <span className="font-bold capitalize text-zinc-900 text-xs">[{u.status}]</span>
+                            <p className="text-zinc-900 mt-1 text-sm font-medium leading-relaxed bg-white p-2 rounded-xl border border-zinc-200">{u.notes}</p>
+                            <span className="text-[10px] text-zinc-400 font-medium block mt-1">{u.updated_at.split('T')[0]}</span>
                           </div>
                       ))}
                     </div>
@@ -1142,62 +1170,72 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
             <div className="border border-zinc-200 rounded-2xl p-4 overflow-y-auto max-h-[420px] bg-zinc-50 flex justify-center">
               {showRepairPrintModal === 'thermal' && (
                 /* Thermal 80mm styled ticket */
-                <div className="w-[80mm] bg-white p-4 border border-zinc-300 shadow-sm text-[11px] font-mono leading-relaxed text-zinc-805 flex flex-col items-center select-none" id="thermal-repair-display-area">
-                  <div className="font-extrabold text-center uppercase tracking-wide text-xs">{setting.company_name}</div>
-                  <div className="text-center text-[10px] text-zinc-500 mt-0.5">{printingJob.branch_name}</div>
-                  <div className="text-center text-[9px] text-zinc-500">{repairBranchInfo.address}</div>
-                  <div className="text-center text-[9px] text-zinc-500">Tel: {repairBranchInfo.phone}</div>
-                  <div className="w-full border-t border-dashed border-zinc-350 my-2" />
+                <div className="w-[80mm] bg-white p-4 border border-zinc-300 shadow-sm text-xs font-mono leading-relaxed text-zinc-900 flex flex-col items-center select-none" id="thermal-repair-display-area">
+                  <div className="font-black text-center uppercase tracking-wide text-sm">{setting.company_name}</div>
+                  <div className="text-center text-xs text-zinc-600 font-semibold mt-0.5">{printingJob.branch_name}</div>
+                  <div className="text-center text-[10px] text-zinc-600">{repairBranchInfo.address}</div>
+                  <div className="text-center text-[10px] text-zinc-600 font-semibold">Tel: {repairBranchInfo.phone}</div>
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
                   
                   <div className="w-full text-center py-1">
-                    <span className="text-xs font-bold tracking-wider uppercase border border-zinc-900 px-2 py-0.5">
+                    <span className="text-xs font-black tracking-wider uppercase border-2 border-zinc-900 px-2.5 py-0.5">
                       REPAIR JOB CARD
                     </span>
-                    <div className="mt-1.5 font-black text-sm tracking-widest">{printingJob.ticket_no}</div>
+                    <div className="mt-1.5 font-black text-base tracking-widest">{printingJob.ticket_no}</div>
                   </div>
 
-                  <div className="w-full border-t border-dashed border-zinc-350 my-2" />
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
                   
-                  <div className="w-full space-y-0.5 text-[9px]">
+                  <div className="w-full space-y-1 text-xs">
                     <div><strong>Date Recvd:</strong> {printingJob.created_at.replace('T', ' ').substring(0, 16)}</div>
                     <div><strong>Cust Name:</strong> {printingJob.customer_name}</div>
                     <div><strong>Mobile No:</strong> {printingJob.customer_phone}</div>
                     <div><strong>Assigned Tech:</strong> {printingJob.technician_name || 'Not assigned'}</div>
                   </div>
 
-                  <div className="w-full border-t border-dashed border-zinc-350 my-2" />
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
                   
-                  <div className="w-full space-y-0.5 text-[9px]">
-                    <div className="font-bold underline uppercase text-[8px] mb-0.5 text-zinc-500">Device Description:</div>
+                  <div className="w-full space-y-1 text-xs">
+                    <div className="font-black underline uppercase text-xs mb-0.5 text-zinc-800">Device Description:</div>
                     <div><strong>Device:</strong> {printingJob.device_type}</div>
                     <div><strong>Brand/Model:</strong> {printingJob.brand} {printingJob.model}</div>
                     <div><strong>Serial Code:</strong> {printingJob.serial_number}</div>
                     <div><strong>Est Price:</strong> Rs. {printingJob.estimated_cost.toLocaleString()} LKR</div>
                   </div>
 
-                  <div className="w-full border-t border-dashed border-zinc-350 my-2" />
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
                   
-                  <div className="w-full text-[9px]">
-                    <div className="font-bold underline uppercase text-[8px] mb-0.5 text-zinc-500">Accessories Handed:</div>
+                  <div className="w-full text-xs">
+                    <div className="font-black underline uppercase text-xs mb-0.5 text-zinc-800">Accessories Handed:</div>
                     {printingJob.accessories && printingJob.accessories.length > 0 ? (
-                      <div className="pl-1 text-zinc-650">{printingJob.accessories.join(', ')}</div>
+                      <div className="pl-1 text-zinc-800 font-semibold">{printingJob.accessories.join(', ')}</div>
                     ) : (
-                      <div className="italic text-zinc-400">None checked</div>
+                      <div className="italic text-zinc-500">None checked</div>
                     )}
                   </div>
 
-                  <div className="w-full border-t border-dashed border-zinc-350 my-2" />
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
                   
-                  <div className="w-full text-[9px]">
-                    <div className="font-bold underline uppercase text-[8px] mb-0.5 text-zinc-500">Reported Problem Issue:</div>
-                    <div className="pl-1 italic leading-tight text-zinc-700">{printingJob.problem_desc}</div>
+                  <div className="w-full text-xs space-y-1">
+                    <div className="font-black underline uppercase text-xs mb-0.5 text-zinc-800">Reported Problem Issue:</div>
+                    <div className="pl-1 text-xs font-bold leading-normal text-zinc-950 bg-zinc-50 border p-1.5 rounded">{printingJob.problem_desc}</div>
                   </div>
+
+                  {printingJob.notes && (
+                    <>
+                      <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
+                      <div className="w-full text-xs space-y-1">
+                        <div className="font-black underline uppercase text-xs mb-0.5 text-zinc-800">Intake Notes:</div>
+                        <div className="pl-1 text-xs font-semibold leading-normal text-zinc-950 bg-zinc-50 border p-1.5 rounded">{printingJob.notes}</div>
+                      </div>
+                    </>
+                  )}
 
                   {printingJob.signature_data && (
                     <>
-                      <div className="w-full border-t border-dashed border-zinc-350 my-2" />
-                      <div className="w-full text-[9px] flex flex-col items-center">
-                        <span className="font-bold text-[8px] text-zinc-400 mb-1">CUSTOMER SIGNATURE:</span>
+                      <div className="w-full border-t-2 border-dashed border-zinc-400 my-2" />
+                      <div className="w-full text-xs flex flex-col items-center">
+                        <span className="font-bold text-[10px] text-zinc-600 mb-1">CUSTOMER SIGNATURE:</span>
                         <div className="bg-zinc-50 border p-1 rounded">
                           <svg className="w-36 h-10 bg-white" viewBox="0 0 300 120">
                             <path d={printingJob.signature_data} stroke="black" strokeWidth="3" fill="none" />
@@ -1207,86 +1245,88 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                     </>
                   )}
 
-                  <div className="w-full border-t border-dashed border-zinc-300 my-3" />
-                  <div className="text-[7.5px] text-center text-zinc-455 leading-tight">
+                  <div className="w-full border-t-2 border-dashed border-zinc-400 my-3" />
+                  <div className="text-[10px] text-center text-zinc-600 leading-snug font-medium">
                     * Not responsible for software data loss. Please back up devices first.<br />
                     * Devices left over 60 days will be disposed of to recover service dues.
                   </div>
-                  <div className="text-[9px] text-center font-bold mt-2 italic">&quot;Majestic Repairs&quot;</div>
+                  <div className="text-xs text-center font-bold mt-2 italic">&quot;Majestic Repairs&quot;</div>
                 </div>
               )}
 
               {showRepairPrintModal === 'a4' && (
                 /* Corporate A4 styled Layout */
-                <div className="w-full bg-white p-6 border border-zinc-300 shadow-sm text-xs leading-relaxed text-zinc-800 flex flex-col space-y-4" id="a4-repair-display-area">
+                <div className="w-full bg-white p-6 border border-zinc-300 shadow-sm text-sm leading-relaxed text-zinc-800 flex flex-col space-y-4" id="a4-repair-display-area">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="text-sm font-extrabold text-zinc-900 uppercase tracking-tight">{setting.company_name}</h3>
-                      <p className="text-[9px] text-zinc-500 mt-1">{printingJob.branch_name}</p>
-                      <p className="text-[9px] text-zinc-500">{repairBranchInfo.address}</p>
-                      <p className="text-[9px] text-zinc-505">Tel: {repairBranchInfo.phone}</p>
+                      <h3 className="text-base font-black text-zinc-900 uppercase tracking-tight">{setting.company_name}</h3>
+                      <p className="text-xs font-semibold text-zinc-700 mt-1">{printingJob.branch_name}</p>
+                      <p className="text-xs text-zinc-600">{repairBranchInfo.address}</p>
+                      <p className="text-xs text-zinc-600 font-semibold">Tel: {repairBranchInfo.phone}</p>
                     </div>
                     <div className="text-right">
-                      <h4 className="text-indigo-650 font-black uppercase text-base leading-none">REPAIR JOB SHEET</h4>
-                      <p className="font-mono text-xs font-semibold text-zinc-650 mt-2">Ticket: {printingJob.ticket_no}</p>
-                      <p className="text-[9px] text-zinc-505">Date: {printingJob.created_at.split('T')[0]}</p>
+                      <h4 className="text-indigo-650 font-black uppercase text-lg leading-none">REPAIR JOB SHEET</h4>
+                      <p className="font-mono text-sm font-bold text-zinc-800 mt-2">Ticket: {printingJob.ticket_no}</p>
+                      <p className="text-xs text-zinc-600">Date: {printingJob.created_at.split('T')[0]}</p>
                     </div>
                   </div>
 
-                  <div className="border-t border-b border-zinc-150 py-3 grid grid-cols-2 gap-4 text-[10px]">
+                  <div className="border-t-2 border-b-2 border-zinc-200 py-3 grid grid-cols-2 gap-4 text-xs">
                     <div>
-                      <div className="font-bold text-zinc-500 uppercase tracking-widest text-[8px] mb-1">Customer Profile:</div>
-                      <p className="text-zinc-900 font-bold text-xs">{printingJob.customer_name}</p>
-                      <p className="text-zinc-550 mt-1">Mobile: {printingJob.customer_phone}</p>
+                      <div className="font-extrabold text-zinc-500 uppercase tracking-widest text-[10px] mb-1">Customer Profile:</div>
+                      <p className="text-zinc-900 font-bold text-sm">{printingJob.customer_name}</p>
+                      <p className="text-zinc-700 font-semibold mt-1">Mobile: {printingJob.customer_phone}</p>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-zinc-500 uppercase tracking-widest text-[8px] mb-1">Intake Officer:</div>
-                      <p className="text-zinc-900 font-semibold">{printingJob.created_by_name || 'System Admin'}</p>
-                      <p className="text-zinc-505 uppercase text-[9px] font-bold">Assigned Technician: {printingJob.technician_name || 'Unassigned'}</p>
+                      <div className="font-extrabold text-zinc-500 uppercase tracking-widest text-[10px] mb-1">Intake Officer:</div>
+                      <p className="text-zinc-900 font-bold text-sm">{printingJob.created_by_name || 'System Admin'}</p>
+                      <p className="text-zinc-700 uppercase text-xs font-bold mt-1">Assigned Technician: {printingJob.technician_name || 'Unassigned'}</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-[10.5px]">
-                    <div>
-                      <h5 className="font-bold text-zinc-800 text-[9px] uppercase tracking-wider mb-1.5 border-b border-zinc-100 pb-1">Hardware Inspection Details</h5>
-                      <div className="space-y-1">
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div className="bg-zinc-50/70 border border-zinc-200 p-3 rounded-xl">
+                      <h5 className="font-bold text-zinc-900 text-xs uppercase tracking-wider mb-2 border-b border-zinc-200 pb-1">Hardware Inspection Details</h5>
+                      <div className="space-y-1.5 text-xs">
                         <div><strong>Device Type:</strong> {printingJob.device_type}</div>
                         <div><strong>Brand & Model:</strong> {printingJob.brand} {printingJob.model}</div>
                         <div><strong>Serial Code / IMEI:</strong> {printingJob.serial_number}</div>
                         <div><strong>Estimated Repair Cost:</strong> Rs. {printingJob.estimated_cost.toLocaleString()} LKR</div>
                       </div>
                     </div>
-                    <div>
-                      <h5 className="font-bold text-zinc-800 text-[9px] uppercase tracking-wider mb-1.5 border-b border-zinc-100 pb-1">Intact Accessories Received</h5>
+                    <div className="bg-zinc-50/70 border border-zinc-200 p-3 rounded-xl">
+                      <h5 className="font-bold text-zinc-900 text-xs uppercase tracking-wider mb-2 border-b border-zinc-200 pb-1">Intact Accessories Received</h5>
                       {printingJob.accessories && printingJob.accessories.length > 0 ? (
-                        <ul className="list-disc pl-4 space-y-0.5 text-zinc-600 text-[10px]">
+                        <ul className="list-disc pl-4 space-y-1 text-zinc-800 text-xs font-medium">
                           {printingJob.accessories.map((acc, index) => (
                             <li key={index}>{acc}</li>
                           ))}
                         </ul>
                       ) : (
-                        <p className="italic text-zinc-400 text-[10px]">No accessories checked in.</p>
+                        <p className="italic text-zinc-500 text-xs">No accessories checked in.</p>
                       )}
                     </div>
                   </div>
 
                   <div className="space-y-1.5 pt-1">
-                    <h5 className="font-bold text-zinc-800 text-[9px] uppercase tracking-wider border-b border-zinc-100 pb-1">Reported Issue / Fault Description</h5>
-                    <p className="bg-zinc-50 border p-2.5 rounded-xl text-zinc-700 italic text-[10px] leading-relaxed">
+                    <h5 className="font-extrabold text-zinc-900 text-xs uppercase tracking-wider border-b border-zinc-200 pb-1">Reported Issue / Fault Description</h5>
+                    <div className="bg-amber-50/70 border border-amber-250 p-3.5 rounded-xl text-zinc-950 font-bold text-sm leading-relaxed">
                       {printingJob.problem_desc}
-                    </p>
+                    </div>
                   </div>
 
                   {printingJob.notes && (
-                    <div className="space-y-1">
-                      <h5 className="font-bold text-zinc-800 text-[9px] uppercase tracking-wider border-b border-zinc-100 pb-0.5">Additional Intake Notes</h5>
-                      <p className="text-zinc-600 text-[10px]">{printingJob.notes}</p>
+                    <div className="space-y-1.5">
+                      <h5 className="font-extrabold text-zinc-900 text-xs uppercase tracking-wider border-b border-zinc-200 pb-1">Additional Intake Notes</h5>
+                      <div className="bg-zinc-50 border border-zinc-250 p-3 rounded-xl text-zinc-900 font-semibold text-sm leading-relaxed">
+                        {printingJob.notes}
+                      </div>
                     </div>
                   )}
 
-                  <div className="flex justify-between items-end pt-4" id="a4-repair-sign-sheet">
-                    <div className="max-w-[60%] text-[8px] text-zinc-500 leading-normal pr-4">
-                      <p className="font-bold uppercase tracking-wider text-zinc-650 text-[7.5px] mb-1">Repair Terms and Conditions:</p>
+                  <div className="flex justify-between items-end pt-4 border-t border-zinc-200" id="a4-repair-sign-sheet">
+                    <div className="max-w-[60%] text-[10px] text-zinc-600 leading-normal pr-4">
+                      <p className="font-bold uppercase tracking-wider text-zinc-800 text-[10px] mb-1">Repair Terms and Conditions:</p>
                       <p>1. Hardware Repairs: All component level repairs carry a standard 30-day hardware failure warranty unless stated otherwise.</p>
                       <p>2. Data Indemnity: {setting.company_name} shall not be held liable for any data loss, file degradation or operating system crashes during the service cycle. Data backup is the sole responsibility of the client.</p>
                       <p>3. Unclaimed Devices: Devices left uncollected for more than sixty (60) days after completion notification will be liquidated, sold, or disposed of to offset storage and service expenses.</p>
@@ -1294,16 +1334,16 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                     
                     {printingJob.signature_data ? (
                       <div className="text-center w-40 flex flex-col items-center">
-                        <span className="font-bold text-[8.5px] text-zinc-400 uppercase">Customer Sign-off</span>
-                        <div className="border border-zinc-200 p-1 bg-zinc-50 rounded-xl mt-1 flex justify-center">
+                        <span className="font-bold text-[10px] text-zinc-500 uppercase">Customer Sign-off</span>
+                        <div className="border border-zinc-300 p-1 bg-zinc-50 rounded-xl mt-1 flex justify-center">
                           <svg className="w-32 h-10 bg-white" viewBox="0 0 300 120">
                             <path d={printingJob.signature_data} stroke="black" strokeWidth="3" fill="none" />
                           </svg>
                         </div>
-                        <span className="text-[7.5px] text-zinc-455 mt-1">Authorized Handover</span>
+                        <span className="text-[9px] text-zinc-500 mt-1">Authorized Handover</span>
                       </div>
                     ) : (
-                      <div className="text-center w-40 border-t border-dashed border-zinc-400 pt-8 text-zinc-400 text-[9px] uppercase tracking-wider font-semibold">
+                      <div className="text-center w-40 border-t-2 border-dashed border-zinc-400 pt-8 text-zinc-600 text-xs uppercase tracking-wider font-bold">
                         Customer Signature
                       </div>
                     )}
@@ -1313,54 +1353,63 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
 
               {showRepairPrintModal === 'a4-half' && (
                 /* Corporate A4 Half Sheet (Landscape) styled Layout */
-                <div className="w-[210mm] bg-white p-5 border border-zinc-300 shadow-sm text-[10px] leading-relaxed text-zinc-805 flex flex-col space-y-3" id="a4-half-repair-display-area">
+                <div className="w-[210mm] bg-white p-5 border border-zinc-300 shadow-sm text-xs leading-relaxed text-zinc-900 flex flex-col space-y-3" id="a4-half-repair-display-area">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="text-xs font-black text-zinc-900 uppercase tracking-tight">{setting.company_name} - {printingJob.branch_name}</h3>
-                      <p className="text-[8.5px] text-zinc-500">{repairBranchInfo.address} | Tel: {repairBranchInfo.phone}</p>
+                      <h3 className="text-sm font-black text-zinc-900 uppercase tracking-tight">{setting.company_name} - {printingJob.branch_name}</h3>
+                      <p className="text-[10px] text-zinc-600 font-medium">{repairBranchInfo.address} | Tel: {repairBranchInfo.phone}</p>
                     </div>
                     <div className="text-right">
-                      <h4 className="text-indigo-650 font-black uppercase text-xs leading-none">REPAIR JOB CARD (A4 HALF)</h4>
-                      <p className="font-mono text-[9px] font-semibold text-zinc-650 mt-1">Ticket: {printingJob.ticket_no} | Date: {printingJob.created_at.split('T')[0]}</p>
+                      <h4 className="text-indigo-650 font-black uppercase text-sm leading-none">REPAIR JOB CARD (A4 HALF)</h4>
+                      <p className="font-mono text-xs font-bold text-zinc-800 mt-1">Ticket: {printingJob.ticket_no} | Date: {printingJob.created_at.split('T')[0]}</p>
                     </div>
                   </div>
 
-                  <div className="border-t border-b border-zinc-150 py-1.5 grid grid-cols-2 gap-4 text-[9px]">
+                  <div className="border-t-2 border-b-2 border-zinc-200 py-2 grid grid-cols-2 gap-4 text-xs">
                     <div>
-                      <span className="font-bold text-zinc-500 uppercase text-[8px]">Customer: </span>
-                      <strong className="text-zinc-900">{printingJob.customer_name}</strong> ({printingJob.customer_phone})
+                      <span className="font-bold text-zinc-500 uppercase text-[10px]">Customer: </span>
+                      <strong className="text-zinc-900 text-sm font-bold">{printingJob.customer_name}</strong> ({printingJob.customer_phone})
                     </div>
                     <div className="text-right">
-                      <span className="font-bold text-zinc-500 uppercase text-[8px]">Tech: </span>
-                      <strong className="text-zinc-900">{printingJob.technician_name || 'Not assigned'}</strong> | Intake: <span>{printingJob.created_by_name || 'Admin'}</span>
+                      <span className="font-bold text-zinc-500 uppercase text-[10px]">Tech: </span>
+                      <strong className="text-zinc-900 font-bold">{printingJob.technician_name || 'Not assigned'}</strong> | Intake: <span>{printingJob.created_by_name || 'Admin'}</span>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-[9px]">
+                  <div className="grid grid-cols-2 gap-4 text-xs">
                     <div>
-                      <span className="font-bold text-zinc-500 uppercase text-[8px] block mb-0.5">Device Inspected:</span>
-                      <strong>{printingJob.device_type}</strong> - {printingJob.brand} {printingJob.model} (SN: {printingJob.serial_number})
+                      <span className="font-bold text-zinc-500 uppercase text-[10px] block mb-0.5">Device Inspected:</span>
+                      <strong className="text-zinc-900">{printingJob.device_type}</strong> - {printingJob.brand} {printingJob.model} (SN: {printingJob.serial_number})
                       <div className="mt-1"><strong>Est. Price:</strong> Rs. {printingJob.estimated_cost.toLocaleString()} LKR</div>
                     </div>
                     <div>
-                      <span className="font-bold text-zinc-500 uppercase text-[8px] block mb-0.5">Accessories:</span>
+                      <span className="font-bold text-zinc-500 uppercase text-[10px] block mb-0.5">Accessories:</span>
                       {printingJob.accessories && printingJob.accessories.length > 0 ? (
-                        <span className="text-zinc-600">{printingJob.accessories.join(', ')}</span>
+                        <span className="text-zinc-800 font-semibold">{printingJob.accessories.join(', ')}</span>
                       ) : (
-                        <span className="italic text-zinc-400">None checked</span>
+                        <span className="italic text-zinc-500">None checked</span>
                       )}
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <span className="font-bold text-zinc-500 uppercase text-[8px] block">Problem Description:</span>
-                    <p className="bg-zinc-50 border p-2 rounded-lg text-zinc-700 italic text-[9.5px]">
+                    <span className="font-extrabold text-zinc-900 uppercase text-xs block">Reported Problem Description:</span>
+                    <p className="bg-amber-50/70 border border-amber-250 p-2.5 rounded-lg text-zinc-950 font-bold text-sm leading-normal">
                       {printingJob.problem_desc}
                     </p>
                   </div>
 
-                  <div className="flex justify-between items-end pt-1 border-t border-zinc-150">
-                    <div className="max-w-[65%] text-[7.5px] text-zinc-500 leading-tight">
+                  {printingJob.notes && (
+                    <div className="space-y-1">
+                      <span className="font-extrabold text-zinc-900 uppercase text-xs block">Additional Intake Notes:</span>
+                      <p className="bg-zinc-50 border border-zinc-250 p-2 rounded-lg text-zinc-900 font-semibold text-xs leading-normal">
+                        {printingJob.notes}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-end pt-2 border-t border-zinc-200">
+                    <div className="max-w-[65%] text-[10px] text-zinc-600 leading-snug">
                       * 30-day component warranty. Not liable for data loss. Uncollected items disposed in 60 days.
                     </div>
                     {printingJob.signature_data && (
@@ -1368,7 +1417,7 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                         <svg className="w-28 h-8 bg-white border rounded" viewBox="0 0 300 120">
                           <path d={printingJob.signature_data} stroke="black" strokeWidth="3" fill="none" />
                         </svg>
-                        <span className="text-[7px] text-zinc-450">Customer Handover</span>
+                        <span className="text-[9px] text-zinc-500 font-medium">Customer Handover</span>
                       </div>
                     )}
                   </div>
@@ -1377,51 +1426,57 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
 
               {showRepairPrintModal === 'a5' && (
                 /* Corporate A5 Portrait styled Layout */
-                <div className="w-[148mm] bg-white p-5 border border-zinc-300 shadow-sm text-[9.5px] leading-relaxed text-zinc-805 flex flex-col space-y-3.5" id="a5-repair-display-area">
+                <div className="w-[148mm] bg-white p-5 border border-zinc-300 shadow-sm text-xs leading-relaxed text-zinc-900 flex flex-col space-y-3.5" id="a5-repair-display-area">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="text-xs font-black text-zinc-900 uppercase tracking-tight">{setting.company_name}</h3>
-                      <p className="text-[8px] text-zinc-500">{printingJob.branch_name}</p>
-                      <p className="text-[8px] text-zinc-500">{repairBranchInfo.address}</p>
-                      <p className="text-[8px] text-zinc-550">Tel: {repairBranchInfo.phone}</p>
+                      <h3 className="text-sm font-black text-zinc-900 uppercase tracking-tight">{setting.company_name}</h3>
+                      <p className="text-[10px] text-zinc-600">{printingJob.branch_name}</p>
+                      <p className="text-[10px] text-zinc-600">{repairBranchInfo.address}</p>
+                      <p className="text-[10px] text-zinc-600 font-semibold">Tel: {repairBranchInfo.phone}</p>
                     </div>
                     <div className="text-right">
-                      <h4 className="text-indigo-650 font-black uppercase text-xs leading-none">REPAIR JOB CARD (A5)</h4>
-                      <p className="font-mono text-[9px] font-semibold text-zinc-650 mt-1">Ticket: {printingJob.ticket_no}</p>
-                      <p className="text-[8px] text-zinc-505">Date: {printingJob.created_at.split('T')[0]}</p>
+                      <h4 className="text-indigo-650 font-black uppercase text-sm leading-none">REPAIR JOB CARD (A5)</h4>
+                      <p className="font-mono text-xs font-bold text-zinc-800 mt-1">Ticket: {printingJob.ticket_no}</p>
+                      <p className="text-[10px] text-zinc-600">Date: {printingJob.created_at.split('T')[0]}</p>
                     </div>
                   </div>
 
-                  <div className="border-t border-b border-zinc-150 py-2 grid grid-cols-2 gap-2 text-[8.5px]">
+                  <div className="border-t-2 border-b-2 border-zinc-200 py-2 grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <div className="font-bold text-zinc-500 uppercase text-[7px] mb-0.5">Customer details:</div>
-                      <p className="text-zinc-900 font-bold">{printingJob.customer_name}</p>
-                      <p className="text-zinc-500">Tel: {printingJob.customer_phone}</p>
+                      <div className="font-bold text-zinc-500 uppercase text-[9px] mb-0.5">Customer details:</div>
+                      <p className="text-zinc-900 font-bold text-sm">{printingJob.customer_name}</p>
+                      <p className="text-zinc-600">Tel: {printingJob.customer_phone}</p>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-zinc-500 uppercase text-[7px] mb-0.5">Assigned technician:</div>
-                      <p className="text-zinc-900 font-semibold">{printingJob.technician_name || 'Unassigned'}</p>
-                      <p className="text-zinc-505 text-[8px]">Invoiced: Rs. {printingJob.estimated_cost.toLocaleString()}</p>
+                      <div className="font-bold text-zinc-500 uppercase text-[9px] mb-0.5">Assigned technician:</div>
+                      <p className="text-zinc-900 font-bold">{printingJob.technician_name || 'Unassigned'}</p>
+                      <p className="text-zinc-700 text-xs font-semibold">Invoiced: Rs. {printingJob.estimated_cost.toLocaleString()}</p>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <span className="font-bold text-zinc-500 uppercase text-[7px]">Hardware & Fault Details:</span>
-                    <p className="font-semibold text-zinc-850">{printingJob.device_type} - {printingJob.brand} {printingJob.model}</p>
-                    <p className="text-zinc-500 text-[8px]">Serial: {printingJob.serial_number}</p>
-                    <p className="bg-zinc-50 border p-2 rounded-lg text-zinc-700 italic text-[9px] leading-tight">
+                  <div className="space-y-1.5 text-xs">
+                    <span className="font-bold text-zinc-700 uppercase text-[10px]">Hardware & Fault Details:</span>
+                    <p className="font-bold text-zinc-900">{printingJob.device_type} - {printingJob.brand} {printingJob.model}</p>
+                    <p className="text-zinc-600 text-xs">Serial: {printingJob.serial_number}</p>
+                    <div className="bg-amber-50/70 border border-amber-250 p-2.5 rounded-lg text-zinc-950 font-bold text-xs leading-normal">
                       Fault: {printingJob.problem_desc}
-                    </p>
+                    </div>
                   </div>
 
-                  {printingJob.accessories && printingJob.accessories.length > 0 && (
-                    <div className="text-[8.5px]">
-                      <strong>Accessories:</strong> <span className="text-zinc-600">{printingJob.accessories.join(', ')}</span>
+                  {printingJob.notes && (
+                    <div className="bg-zinc-50 border border-zinc-200 p-2 rounded-lg text-zinc-900 font-medium text-xs">
+                      <strong>Notes:</strong> {printingJob.notes}
                     </div>
                   )}
 
-                  <div className="flex justify-between items-end pt-2 border-t border-zinc-150">
-                    <div className="max-w-[60%] text-[7.5px] text-zinc-500 leading-tight">
+                  {printingJob.accessories && printingJob.accessories.length > 0 && (
+                    <div className="text-xs">
+                      <strong>Accessories:</strong> <span className="text-zinc-700 font-medium">{printingJob.accessories.join(', ')}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-end pt-2 border-t border-zinc-200">
+                    <div className="max-w-[60%] text-[10px] text-zinc-600 leading-tight">
                       * Warranty covers manufacturers defect. Devices left 60 days disposed.
                     </div>
                     {printingJob.signature_data ? (
@@ -1429,10 +1484,10 @@ export default function RepairCenter({ user, activeBranch }: RepairCenterProps) 
                         <svg className="w-24 h-8 bg-white border rounded" viewBox="0 0 300 120">
                           <path d={printingJob.signature_data} stroke="black" strokeWidth="3" fill="none" />
                         </svg>
-                        <span className="text-[7px] text-zinc-400">Customer Sign</span>
+                        <span className="text-[9px] text-zinc-500 font-medium">Customer Sign</span>
                       </div>
                     ) : (
-                      <div className="w-20 border-t border-dashed border-zinc-300 pt-3 text-[7.5px] text-zinc-400 text-center uppercase">
+                      <div className="w-24 border-t-2 border-dashed border-zinc-400 pt-3 text-[10px] text-zinc-500 text-center uppercase font-bold">
                         Signature
                       </div>
                     )}

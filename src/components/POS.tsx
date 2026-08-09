@@ -7,17 +7,19 @@ import {
   Percent, Grid, Printer, Mail, Download, History, Tag, FileText, Landmark,
   MessageCircle, Image as ImageIcon, Share2, Copy,
   FileSpreadsheet, FileUp, FileDown, X, Users, UserPlus, CheckCircle, Upload, Pencil,
-  Eye, EyeOff, PackageX, MapPin, CornerUpLeft
+  Eye, EyeOff, PackageX, MapPin, CornerUpLeft, Clock, Calendar, ArrowRight, FileCheck, Send, Check
 } from 'lucide-react';
-import { User, Branch, Product, ProductStock, Customer, PaymentMethod, Invoice, SplitPaymentDetail } from '../types';
+import { User, Branch, Product, ProductStock, Customer, PaymentMethod, Invoice, SplitPaymentDetail, Quotation, QuotationItem } from '../types';
 import { exportToCSV, parseCSV } from '../utils/excelHelper';
 import { extractTextFromPDF } from '../utils/pdfHelper';
 import SupervisorAuthModal from './SupervisorAuthModal';
+import QuotationPrintModal from './QuotationPrintModal';
 import { getCustomers, createCustomer, updateCustomer } from '../services/customers';
 import { getProducts } from '../services/products';
 import { getProductStocks } from '../services/productStocks';
 import { getSetting } from '../services/settings';
 import { getInvoices, updateInvoice, modifyInvoice, processSalesReturn } from '../services/invoices';
+import { getQuotations, createQuotation, updateQuotation, updateQuotationStatus, deleteQuotation } from '../services/quotations';
 import { updateProductStock } from '../services/productStocks';
 import { processSale } from '../services/sales';
 import { supabase } from '../lib/supabaseClient';
@@ -89,7 +91,24 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'checkout' | 'history'>('checkout');
+  const [activeTab, setActiveTab] = useState<'checkout' | 'history' | 'quotations'>('checkout');
+
+  // Sales Quotation Management states
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
+  const [showQuotationPrintModal, setShowQuotationPrintModal] = useState(false);
+  const [quotationSearchQuery, setQuotationSearchQuery] = useState('');
+  const [quotationStatusFilter, setQuotationStatusFilter] = useState<string>('all');
+  const [quotationValidityDays, setQuotationValidityDays] = useState<number>(14);
+  const [quotationNotesInput, setQuotationNotesInput] = useState('');
+  const [showSaveQuotationModal, setShowSaveQuotationModal] = useState(false);
+  const [quotationToastMsg, setQuotationToastMsg] = useState<string | null>(null);
+
+  // WhatsApp Quotation states
+  const [showWhatsAppQuotationDialog, setShowWhatsAppQuotationDialog] = useState(false);
+  const [whatsappQuotationPhone, setWhatsappQuotationPhone] = useState('');
+  const [whatsappQuotationMessage, setWhatsappQuotationMessage] = useState('');
+  const [isGeneratingQuotationImage, setIsGeneratingQuotationImage] = useState(false);
 
   // Customer selection
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -131,9 +150,10 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
       getProductStocks(),
       getSetting(),
       getInvoices(),
+      getQuotations(),
       import('../services/categories').then(s => s.getCategories()),
       import('../services/brands').then(s => s.getBrands())
-    ]).then(([c, p, ps, s, i, cats, brands]) => {
+    ]).then(([c, p, ps, s, i, qts, cats, brands]) => {
       console.log('Products fetched:', p);
       console.log('Active branch:', activeBranch);
       setCustomers(c);
@@ -142,6 +162,7 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
       setCompanySetting(s);
       setCategories(cats);
       setInvoices(activeBranch ? i.filter(inv => inv.branch_id === activeBranch.id) : i);
+      setQuotations(activeBranch ? qts.filter(q => q.branch_id === activeBranch.id) : qts);
     }).catch(console.error);
   }, [refreshKey, activeBranch]);
 
@@ -838,6 +859,20 @@ Thank you for your business!`;
     });
   }, [productsWithStock, selectedCategory, searchQuery, hideZeroStock]);
 
+  // Filter sales quotations
+  const filteredQuotations = useMemo(() => {
+    return quotations.filter(q => {
+      const matchesStatus = quotationStatusFilter === 'all' || q.status === quotationStatusFilter;
+      const cleanQ = quotationSearchQuery.toLowerCase();
+      const matchesSearch = q.quotation_no.toLowerCase().includes(cleanQ) ||
+                            q.customer_name.toLowerCase().includes(cleanQ) ||
+                            (q.customer_phone && q.customer_phone.includes(cleanQ)) ||
+                            (q.notes && q.notes.toLowerCase().includes(cleanQ)) ||
+                            (q.quotation_items && q.quotation_items.some(i => i.product_name.toLowerCase().includes(cleanQ)));
+      return matchesStatus && matchesSearch;
+    });
+  }, [quotations, quotationStatusFilter, quotationSearchQuery]);
+
   // Cart operations
   const addToCart = (product: Product & { stock: number }) => {
     if (product.stock === 0) {
@@ -1069,6 +1104,189 @@ Thank you for your business!`;
     setAuthRefundInvoice(null);
   };
 
+  // Quotation Management Handlers
+  const handleOpenSaveQuotationModal = () => {
+    if (cart.length === 0) {
+      setErrorText('Please add at least one product to the sales basket before generating a quotation.');
+      setTimeout(() => setErrorText(null), 3500);
+      return;
+    }
+    setShowSaveQuotationModal(true);
+  };
+
+  const handleCreateQuotation = async () => {
+    if (cart.length === 0) return;
+
+    const selectedCust = customers.find(c => c.id === selectedCustomerId);
+    const customerName = selectedCust?.name || guestName.trim() || 'Valued Customer';
+    const customerPhone = selectedCust?.phone || guestPhone.trim() || undefined;
+    const customerEmail = selectedCust?.email || undefined;
+
+    const days = quotationValidityDays || 14;
+    const validUntilDate = new Date(Date.now() + days * 86400000).toISOString().split('T')[0];
+
+    try {
+      const newQuote = await createQuotation({
+        branch_id: activeBranch?.id || 'b-colombo',
+        branch_name: activeBranch?.name || 'Colombo Showroom',
+        customer_id: selectedCust?.id || undefined,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        customer_email: customerEmail,
+        subtotal: subtotal,
+        discount: overallDiscount,
+        tax: taxAmount,
+        total: totalAmount,
+        valid_until: validUntilDate,
+        created_by_name: user.name,
+        notes: quotationNotesInput.trim() || billingNote.trim() || undefined,
+        terms_conditions: '1. Prices are valid for 14 days from quotation issue date.\n2. Official hardware warranty applies upon finalized purchase.\n3. Goods subject to showroom stock availability on confirmation.',
+        items: cart.map(item => ({
+          product_id: item.product.id,
+          product_name: item.product.name,
+          sku: item.product.sku,
+          unit_price: item.product.selling_price,
+          quantity: item.quantity,
+          discount: item.discount || 0
+        }))
+      });
+
+      setQuotations(prev => [newQuote, ...prev]);
+      setSelectedQuotation(newQuote);
+      setShowQuotationPrintModal(true);
+      setShowSaveQuotationModal(false);
+      setQuotationNotesInput('');
+      setQuotationToastMsg(`Quotation "${newQuote.quotation_no}" generated successfully!`);
+      setTimeout(() => setQuotationToastMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Error creating quotation:', err);
+      alert('Failed to create quotation: ' + (err.message || err));
+    }
+  };
+
+  const handleConvertQuotationToCart = async (q: Quotation) => {
+    const loadedItems: CartItem[] = (q.quotation_items || []).map(qi => {
+      const matchedProd = allProducts.find(p => p.id === qi.product_id);
+      return {
+        product: matchedProd || {
+          id: qi.product_id,
+          name: qi.product_name,
+          sku: qi.sku,
+          selling_price: qi.unit_price,
+          cost_price: qi.unit_price * 0.8,
+          category_id: 'cat-gen',
+          warranty_period: '1-Year',
+          description: '',
+          barcode: '',
+          created_at: new Date().toISOString()
+        },
+        quantity: qi.quantity,
+        discount: qi.discount || 0
+      };
+    });
+
+    setCart(loadedItems);
+    setOverallDiscount(q.discount || 0);
+
+    if (q.customer_id) {
+      setSelectedCustomerId(q.customer_id);
+      setGuestName('');
+      setGuestPhone('');
+    } else {
+      setSelectedCustomerId('');
+      setGuestName(q.customer_name);
+      setGuestPhone(q.customer_phone || '');
+    }
+
+    if (q.notes) {
+      setBillingNote(`Quote Ref: ${q.quotation_no} - ${q.notes}`);
+    }
+
+    try {
+      await updateQuotationStatus(q.id, 'converted');
+      setQuotations(prev => prev.map(item => item.id === q.id ? { ...item, status: 'converted' } : item));
+    } catch (e) {
+      console.warn('Could not update quotation status:', e);
+    }
+
+    setActiveTab('checkout');
+    setQuotationToastMsg(`Quotation ${q.quotation_no} loaded into POS checkout basket!`);
+    setTimeout(() => setQuotationToastMsg(null), 4000);
+  };
+
+  const handleUpdateQuotationStatus = async (id: string, status: any) => {
+    try {
+      await updateQuotationStatus(id, status);
+      setQuotations(prev => prev.map(q => q.id === id ? { ...q, status } : q));
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update quotation status');
+    }
+  };
+
+  const handleDeleteQuotation = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this sales quotation?')) return;
+    try {
+      await deleteQuotation(id);
+      setQuotations(prev => prev.filter(q => q.id !== id));
+      setQuotationToastMsg('Quotation deleted successfully.');
+      setTimeout(() => setQuotationToastMsg(null), 3000);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to delete quotation');
+    }
+  };
+
+  const prepareWhatsAppQuotation = (q: Quotation) => {
+    const items = q.quotation_items || [];
+    const itemLines = items.map(item => `• ${item.product_name} x${item.quantity} = Rs. ${((item.unit_price - item.discount) * item.quantity).toLocaleString()}`).join('\n');
+    
+    const text = `*MAJESTIC COMPUTERS - SALES QUOTATION*
+📄 *Quotation No:* ${q.quotation_no}
+📅 *Date:* ${q.created_at.split('T')[0]}
+⏳ *Valid Until:* ${q.valid_until ? q.valid_until.split('T')[0] : '14 Days'}
+👤 *Customer:* ${q.customer_name}
+
+*Quoted Hardware Specification:*
+${itemLines}
+
+───────────────
+💰 *Subtotal:* Rs. ${q.subtotal.toLocaleString()}
+🏷️ *Discount:* Rs. ${q.discount.toLocaleString()}
+💵 *Total Quoted Value:* Rs. ${q.total.toLocaleString()} LKR
+
+*Terms & Conditions:*
+${q.terms_conditions || '1-Year Hardware Warranty. Stock subject to showroom availability.'}
+
+Thank you for choosing Majestic Computers!`;
+
+    setWhatsappQuotationPhone(q.customer_phone || '');
+    setWhatsappQuotationMessage(text);
+    setSelectedQuotation(q);
+    setShowWhatsAppQuotationDialog(true);
+  };
+
+  const sendWhatsAppQuotationMessage = () => {
+    if (!whatsappQuotationPhone.trim()) {
+      alert('Please enter a WhatsApp phone number.');
+      return;
+    }
+    let cleanNum = whatsappQuotationPhone.replace(/\D/g, '');
+    if (cleanNum.startsWith('0')) {
+      cleanNum = '94' + cleanNum.substring(1);
+    }
+
+    const appUrl = `whatsapp://send?phone=${cleanNum}&text=${encodeURIComponent(whatsappQuotationMessage)}`;
+    const webUrl = `https://api.whatsapp.com/send?phone=${cleanNum}&text=${encodeURIComponent(whatsappQuotationMessage)}`;
+
+    window.location.href = appUrl;
+    setTimeout(() => {
+      window.open(webUrl, '_blank');
+    }, 1200);
+
+    setShowWhatsAppQuotationDialog(false);
+  };
+
   const handlePrint = (elementId: string, format: string, orientationOverride?: 'portrait' | 'landscape') => {
     const orientation = orientationOverride || printOrientation;
     let printStyle = '';
@@ -1133,7 +1351,8 @@ Thank you for your business!`;
               margin: 0 !important; 
               padding: 0 !important;
             }
-            #a4-half-invoice-display-area {
+            #a4-half-invoice-display-area,
+            #a4-half-quotation-display-area {
               width: 200mm !important;
               max-width: 100% !important;
               margin: 0 auto !important;
@@ -1154,7 +1373,8 @@ Thank you for your business!`;
               margin: 0 !important; 
               padding: 0 !important;
             }
-            #a4-half-invoice-display-area {
+            #a4-half-invoice-display-area,
+            #a4-half-quotation-display-area {
               width: 200mm !important;
               max-width: 100% !important;
               min-height: 130mm !important;
@@ -1180,9 +1400,13 @@ Thank you for your business!`;
     const resetOuterBoxStyle = `
       @media print {
         #thermal-receipt-display-area,
+        #thermal-quotation-display-area,
         #a4-invoice-display-area,
+        #a4-quotation-display-area,
         #a4-half-invoice-display-area,
-        #a5-invoice-display-area {
+        #a4-half-quotation-display-area,
+        #a5-invoice-display-area,
+        #a5-quotation-display-area {
           border: none !important;
           border-width: 0px !important;
           margin: 0 auto !important;
@@ -1195,9 +1419,22 @@ Thank you for your business!`;
 
   return (
     <div className="space-y-6" id="pos-module-root">
+      {/* Quotation Toast Message */}
+      {quotationToastMsg && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl flex items-center justify-between text-xs shadow-xs animate-in fade-in">
+          <div className="flex items-center gap-2 font-bold">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{quotationToastMsg}</span>
+          </div>
+          <button onClick={() => setQuotationToastMsg(null)} className="text-emerald-700 hover:text-emerald-900 font-extrabold">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Switcher Header */}
-      <div className="flex justify-between items-center bg-zinc-50 border border-zinc-200/80 p-2 rounded-2xl">
-        <div className="flex gap-1">
+      <div className="flex flex-wrap justify-between items-center bg-zinc-50 border border-zinc-200/80 p-2 rounded-2xl gap-2">
+        <div className="flex flex-wrap gap-1">
           <button
             onClick={() => setActiveTab('checkout')}
             className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
@@ -1218,7 +1455,18 @@ Thank you for your business!`;
             }`}
           >
             <History className="w-4 h-4" />
-            Showroom Invoice History
+            Showroom Invoices ({invoices.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('quotations')}
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
+              activeTab === 'quotations'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'text-zinc-650 hover:bg-zinc-200/50'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4 text-amber-300" />
+            Sales Quotations ({quotations.length})
           </button>
         </div>
         <div className="flex items-center gap-2 text-[11px] font-bold text-zinc-600 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl shadow-xs">
@@ -1694,16 +1942,29 @@ Thank you for your business!`;
               />
             </div>
 
-            {/* Checkout Button */}
-            <button
-              onClick={handleCheckout}
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md uppercase tracking-wider"
-            >
-              Complete Sale & Issue Bill
-            </button>
+            {/* Checkout & Quotation Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleOpenSaveQuotationModal}
+                className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs py-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
+                title="Generate quotation without deducting inventory"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-amber-700" />
+                <span>Save As Quotation</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCheckout}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md uppercase tracking-wider cursor-pointer"
+              >
+                Complete Sale & Issue Bill
+              </button>
+            </div>
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'history' ? (
         /* Invoice transactions Log screen (History Tab) */
         <div className="bg-white rounded-2xl border border-zinc-200/80 p-5 shadow-sm space-y-4" id="invoice-history-panel">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-zinc-100">
@@ -1830,6 +2091,297 @@ Thank you for your business!`;
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      ) : (
+        /* Sales Quotations Management Tab */
+        <div className="space-y-4" id="quotations-dashboard-panel">
+          {/* KPI Stat Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-zinc-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Total Quotations</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-zinc-900">{quotations.length}</span>
+                <span className="text-xs text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-lg">Showroom</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-zinc-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Quoted Pipeline Value</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-indigo-600">
+                  Rs. {quotations.reduce((sum, q) => sum + (q.total || 0), 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-zinc-500 font-medium">LKR</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-zinc-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Active / Pending</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-amber-600">
+                  {quotations.filter(q => q.status === 'pending' || q.status === 'sent').length}
+                </span>
+                <span className="text-xs text-amber-700 font-semibold">Under Consideration</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-zinc-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Converted to Sales</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xl font-extrabold text-emerald-600">
+                  {quotations.filter(q => q.status === 'converted' || q.status === 'accepted').length}
+                </span>
+                <span className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-lg">
+                  {quotations.length > 0
+                    ? Math.round((quotations.filter(q => q.status === 'converted' || q.status === 'accepted').length / quotations.length) * 100)
+                    : 0}% Success
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quotations Main Panel */}
+          <div className="bg-white rounded-2xl border border-zinc-200/80 p-5 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-zinc-100">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-amber-600" />
+                <h4 className="text-sm font-bold text-zinc-900">
+                  Showroom Sales Quotations ({activeBranch?.name || 'All Branches'})
+                </h4>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const headers = ['Quotation No', 'Date', 'Valid Until', 'Customer Name', 'Phone', 'Email', 'Branch', 'Subtotal (LKR)', 'Discount (LKR)', 'Total (LKR)', 'Status', 'Items Count'];
+                    const rows = quotations.map(q => [
+                      q.quotation_no,
+                      q.created_at.split('T')[0],
+                      q.valid_until || '14 Days',
+                      q.customer_name,
+                      q.customer_phone || '',
+                      q.customer_email || '',
+                      q.branch_name,
+                      q.subtotal,
+                      q.discount,
+                      q.total,
+                      q.status,
+                      q.quotation_items?.length || 0
+                    ]);
+                    exportToCSV(headers, rows, `Quotations_${activeBranch?.name || 'Showroom'}_${new Date().toISOString().split('T')[0]}.csv`);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>Export CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('checkout')}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Quote in POS</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filters Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-8 relative">
+                <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search by quote number, customer name, phone, item name, notes..."
+                  value={quotationSearchQuery}
+                  onChange={(e) => setQuotationSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-800 outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+              <div className="sm:col-span-4">
+                <select
+                  value={quotationStatusFilter}
+                  onChange={(e) => setQuotationStatusFilter(e.target.value)}
+                  className="w-full py-2 px-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-800 outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
+                >
+                  <option value="all">All Quotation Statuses</option>
+                  <option value="pending">Pending / Draft</option>
+                  <option value="sent">Sent to Customer</option>
+                  <option value="accepted">Customer Accepted</option>
+                  <option value="converted">Converted to Invoice</option>
+                  <option value="rejected">Rejected / Cancelled</option>
+                  <option value="expired">Expired</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Quotations Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead style={{ backgroundColor: '#ffffff', color: '#000000' }}>
+                  <tr className="border-b border-zinc-200 text-zinc-500 font-semibold text-left uppercase text-[10px]">
+                    <th className="pb-3 text-left">Quote No</th>
+                    <th className="pb-3 text-left">Customer Profile</th>
+                    <th className="pb-3 text-left">Quoted Specifications</th>
+                    <th className="pb-3 text-center">Validity & Date</th>
+                    <th className="pb-3 text-right">Quoted Total</th>
+                    <th className="pb-3 text-center">Status</th>
+                    <th className="pb-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 text-zinc-700">
+                  {filteredQuotations.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-zinc-400">
+                        <div className="max-w-sm mx-auto space-y-2">
+                          <FileSpreadsheet className="w-8 h-8 text-zinc-300 mx-auto" />
+                          <p className="text-xs font-semibold text-zinc-600">No sales quotations found matching criteria.</p>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('checkout')}
+                            className="text-amber-600 hover:text-amber-700 font-bold text-xs underline"
+                          >
+                            Add products to basket and generate a new quotation
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredQuotations.map(q => {
+                      const isExpired = q.valid_until && new Date(q.valid_until).getTime() < Date.now();
+                      const statusColor = 
+                        q.status === 'converted' ? 'bg-purple-100 text-purple-800 border-purple-200' :
+                        q.status === 'accepted' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
+                        q.status === 'sent' ? 'bg-blue-100 text-blue-800 border-blue-200' :
+                        q.status === 'rejected' ? 'bg-rose-100 text-rose-800 border-rose-200' :
+                        isExpired ? 'bg-zinc-100 text-zinc-600 border-zinc-200' :
+                        'bg-amber-100 text-amber-800 border-amber-200';
+
+                      return (
+                        <tr key={q.id} className="hover:bg-zinc-50/60 transition-colors">
+                          <td className="py-3 font-semibold font-mono text-zinc-900">
+                            <div className="flex items-center gap-1">
+                              <span>{q.quotation_no}</span>
+                            </div>
+                            <span className="text-[10px] text-zinc-400 block font-sans">
+                              {q.branch_name}
+                            </span>
+                          </td>
+
+                          <td className="py-3">
+                            <div className="font-bold text-zinc-900">{q.customer_name}</div>
+                            {q.customer_phone && <div className="text-[10px] text-zinc-500">{q.customer_phone}</div>}
+                            {q.customer_email && <div className="text-[10px] text-zinc-400">{q.customer_email}</div>}
+                            {q.notes && (
+                              <div className="text-[10px] text-amber-900 bg-amber-50/90 border border-amber-200 rounded px-1.5 py-0.5 mt-1 max-w-xs">
+                                <strong>Note:</strong> {q.notes}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3 max-w-xs">
+                            <div className="font-semibold text-zinc-800">
+                              {(q.quotation_items || []).length} Item{(q.quotation_items || []).length !== 1 ? 's' : ''}:
+                            </div>
+                            <div className="text-[10px] text-zinc-500 truncate" title={(q.quotation_items || []).map(i => `${i.product_name} (x${i.quantity})`).join(', ')}>
+                              {(q.quotation_items || []).map(i => `${i.product_name} (x${i.quantity})`).join(', ')}
+                            </div>
+                          </td>
+
+                          <td className="py-3 text-center">
+                            <div className="text-[11px] font-semibold text-zinc-800">
+                              {q.created_at.split('T')[0]}
+                            </div>
+                            <div className="text-[10px] text-zinc-400 mt-0.5">
+                              Valid: {q.valid_until ? q.valid_until.split('T')[0] : '14 Days'}
+                            </div>
+                            {isExpired && q.status === 'pending' && (
+                              <span className="text-[9px] font-extrabold text-red-600 uppercase tracking-tight block mt-0.5">
+                                [Expired]
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 text-right font-extrabold text-zinc-900">
+                            Rs. {q.total.toLocaleString()}
+                            {q.discount > 0 && (
+                              <span className="block text-[10px] text-emerald-600 font-medium">
+                                -Rs. {q.discount.toLocaleString()} disc
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 text-center">
+                            <select
+                              value={q.status}
+                              onChange={(e) => handleUpdateQuotationStatus(q.id, e.target.value)}
+                              className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border cursor-pointer outline-none ${statusColor}`}
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="sent">Sent</option>
+                              <option value="accepted">Accepted</option>
+                              <option value="converted">Converted</option>
+                              <option value="rejected">Rejected</option>
+                              <option value="expired">Expired</option>
+                            </select>
+                          </td>
+
+                          <td className="py-3 text-right space-x-1 whitespace-nowrap">
+                            {/* Print / Preview */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedQuotation(q);
+                                setShowQuotationPrintModal(true);
+                              }}
+                              title="Print / Preview Quotation Formats (A4-Half, A4, Thermal, A5)"
+                              className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors inline-flex items-center gap-1 font-bold text-[11px]"
+                            >
+                              <Printer className="w-3.5 h-3.5 inline" />
+                              <span>Print</span>
+                            </button>
+
+                            {/* Convert to POS Cart */}
+                            <button
+                              type="button"
+                              onClick={() => handleConvertQuotationToCart(q)}
+                              title="Load items from this quotation directly into POS checkout basket"
+                              className="p-1.5 text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg transition-colors inline-flex items-center gap-1 font-bold text-[11px]"
+                            >
+                              <ShoppingCart className="w-3.5 h-3.5 inline" />
+                              <span>To POS</span>
+                            </button>
+
+                            {/* WhatsApp Quote */}
+                            <button
+                              type="button"
+                              onClick={() => prepareWhatsAppQuotation(q)}
+                              title="Transmit Quotation via WhatsApp"
+                              className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 inline" />
+                            </button>
+
+                            {/* Delete Quote */}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteQuotation(q.id)}
+                              title="Delete Quotation"
+                              className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 inline" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -3485,6 +4037,192 @@ Thank you for your business!`;
                 className="px-6 py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-extrabold rounded-xl transition-all shadow-lg uppercase tracking-wider cursor-pointer"
               >
                 Confirm Sales Return
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SALES QUOTATION PRINT MODAL LAYER */}
+      {showQuotationPrintModal && selectedQuotation && (
+        <QuotationPrintModal
+          quotation={selectedQuotation}
+          companySetting={companySetting}
+          branchInfo={{
+            address: activeBranch?.location || companySetting?.address || '123 Tech Avenue, Colombo 03',
+            phone: activeBranch?.phone || companySetting?.phone || '+94 11 234 5678',
+          }}
+          onClose={() => setShowQuotationPrintModal(false)}
+          onPrint={(elementId, format, orientation) => handlePrint(elementId, format, orientation as 'portrait' | 'landscape')}
+          onShareWhatsApp={(q) => prepareWhatsAppQuotation(q)}
+        />
+      )}
+
+      {/* SAVE / CONFIGURE SALES QUOTATION MODAL */}
+      {showSaveQuotationModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 shadow-2xl max-w-lg w-full space-y-4 animate-in fade-in">
+            <div className="flex justify-between items-center border-b border-zinc-100 pb-3">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-amber-600" />
+                <h3 className="text-sm font-extrabold text-zinc-900">
+                  Generate Formal Sales Quotation
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowSaveQuotationModal(false)}
+                className="text-zinc-400 hover:text-zinc-700 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Summary card */}
+              <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-3.5 space-y-2">
+                <div className="flex justify-between font-semibold text-amber-900">
+                  <span>Customer:</span>
+                  <span>
+                    {customers.find(c => c.id === selectedCustomerId)?.name || guestName || 'Walk-in / Valued Client'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-zinc-600">
+                  <span>Branch:</span>
+                  <span>{activeBranch?.name}</span>
+                </div>
+                <div className="flex justify-between text-zinc-600">
+                  <span>Basket Items:</span>
+                  <span>{cart.length} item(s)</span>
+                </div>
+                <div className="border-t border-amber-200/60 pt-2 flex justify-between font-extrabold text-zinc-900 text-sm">
+                  <span>Quoted Net Total:</span>
+                  <span className="text-amber-700">Rs. {totalAmount.toLocaleString()} LKR</span>
+                </div>
+              </div>
+
+              {/* Quotation Validity */}
+              <div className="space-y-1">
+                <label className="font-bold text-zinc-700 block">
+                  Quotation Validity Duration:
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[7, 14, 30, 60].map(days => (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setQuotationValidityDays(days)}
+                      className={`py-2 text-center rounded-xl font-bold border transition-all cursor-pointer ${
+                        quotationValidityDays === days
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
+                      }`}
+                    >
+                      {days} Days
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quotation Notes / Scope */}
+              <div className="space-y-1">
+                <label className="font-bold text-zinc-700 block">
+                  Custom Quotation Remarks / Project Scope:
+                </label>
+                <textarea
+                  value={quotationNotesInput}
+                  onChange={(e) => setQuotationNotesInput(e.target.value)}
+                  placeholder="e.g. Special enterprise bulk pricing quotation, valid for PO issuance..."
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-zinc-800 outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 h-20 resize-none"
+                  maxLength={500}
+                />
+              </div>
+
+              <div className="text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 p-2.5 rounded-xl">
+                ℹ️ Generating a quotation <strong>does not deduct physical showroom inventory</strong>. It reserves quotation pricing and specs for the client.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+              <button
+                type="button"
+                onClick={() => setShowSaveQuotationModal(false)}
+                className="px-4 py-2.5 rounded-xl text-zinc-600 hover:bg-zinc-100 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateQuotation}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs shadow-md uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Issue & Print Quotation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WHATSAPP TRANSMISSION MODAL FOR QUOTATIONS */}
+      {showWhatsAppQuotationDialog && selectedQuotation && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 shadow-2xl max-w-md w-full space-y-4 animate-in fade-in">
+            <div className="flex justify-between items-center border-b border-zinc-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-zinc-900">Transmit Quote via WhatsApp</h3>
+                  <p className="text-[10px] text-zinc-500">Quotation #{selectedQuotation.quotation_no}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowWhatsAppQuotationDialog(false)}
+                className="text-zinc-400 hover:text-zinc-700 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="font-bold text-zinc-700">Client WhatsApp Phone Number:</label>
+                <input
+                  type="text"
+                  value={whatsappQuotationPhone}
+                  onChange={(e) => setWhatsappQuotationPhone(e.target.value)}
+                  placeholder="e.g. 0771234567 or +94771234567"
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs text-zinc-800 outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-zinc-700">Message Preview:</label>
+                <textarea
+                  value={whatsappQuotationMessage}
+                  onChange={(e) => setWhatsappQuotationMessage(e.target.value)}
+                  rows={8}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-[11px] font-mono text-zinc-800 outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+              <button
+                type="button"
+                onClick={() => setShowWhatsAppQuotationDialog(false)}
+                className="px-4 py-2 rounded-xl text-zinc-600 hover:bg-zinc-100 font-bold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={sendWhatsAppQuotationMessage}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Send className="w-4 h-4" />
+                <span>Send to WhatsApp</span>
               </button>
             </div>
           </div>
