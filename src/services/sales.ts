@@ -99,7 +99,7 @@ export async function processSale(sale: SaleData): Promise<Invoice> {
     };
   });
 
-  const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
+  const { data: insertedItems, error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems).select('*');
   if (itemsError) throw itemsError;
 
   // 3. Update stock (simplified, this should really be a DB function)
@@ -119,5 +119,10 @@ export async function processSale(sale: SaleData): Promise<Invoice> {
       .eq('branch_id', sale.branchId);
   }
 
-  return invoice;
+  return {
+    ...invoice,
+    invoice_items: (insertedItems && insertedItems.length > 0)
+      ? insertedItems
+      : invoiceItems.map((itm, idx) => ({ id: `itm-${Date.now()}-${idx}`, ...itm }))
+  };
 }

@@ -7,7 +7,7 @@ import {
   Percent, Grid, Printer, Mail, Download, History, Tag, FileText, Landmark,
   MessageCircle, Image as ImageIcon, Share2, Copy,
   FileSpreadsheet, FileUp, FileDown, X, Users, UserPlus, CheckCircle, Upload, Pencil,
-  Eye, EyeOff, PackageX, MapPin, CornerUpLeft, Clock, Calendar, ArrowRight, FileCheck, Send, Check
+  Eye, EyeOff, PackageX, MapPin, CornerUpLeft, Clock, Calendar, ArrowRight, FileCheck, Send, Check, RotateCcw
 } from 'lucide-react';
 import { User, Branch, Product, ProductStock, Customer, PaymentMethod, Invoice, SplitPaymentDetail, Quotation, QuotationItem } from '../types';
 import { exportToCSV, parseCSV } from '../utils/excelHelper';
@@ -85,6 +85,7 @@ interface CartItem {
   product: Product;
   quantity: number;
   discount: number; // Item discount
+  unitPrice?: number; // Custom editable sales price during billing
 }
 
 export default function POS({ user, activeBranch, branches, onBranchChange }: POSProps) {
@@ -923,6 +924,27 @@ Thank you for your business!`;
     setCart(updated);
   };
 
+  const updateItemPrice = (idx: number, stringAmount: string) => {
+    const updated = [...cart];
+    if (stringAmount === '') {
+      updated[idx].unitPrice = 0;
+    } else {
+      const val = parseFloat(stringAmount);
+      updated[idx].unitPrice = isNaN(val) ? 0 : Math.max(0, val);
+    }
+    setCart(updated);
+  };
+
+  const resetItemPriceToDefault = (idx: number) => {
+    const updated = [...cart];
+    delete updated[idx].unitPrice;
+    setCart(updated);
+  };
+
+  const getItemUnitPrice = (item: CartItem): number => {
+    return typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : item.product.selling_price;
+  };
+
   const removeFromCart = (idx: number) => {
     const updated = [...cart];
     updated.splice(idx, 1);
@@ -931,7 +953,7 @@ Thank you for your business!`;
 
   // Calculations for bill
   const subtotal = useMemo(() => {
-    return cart.reduce((sum, item) => sum + (item.product.selling_price - item.discount) * item.quantity, 0);
+    return cart.reduce((sum, item) => sum + (getItemUnitPrice(item) - item.discount) * item.quantity, 0);
   }, [cart]);
 
   const taxAmount = useMemo(() => {
@@ -1014,7 +1036,7 @@ Thank you for your business!`;
         sku: item.product.sku,
         quantity: item.quantity,
         discount: item.discount,
-        sellingPrice: item.product.selling_price
+        sellingPrice: getItemUnitPrice(item)
       }));
 
       const finalInv = await processSale({
@@ -1031,9 +1053,11 @@ Thank you for your business!`;
         notes: billingNote
       });
 
+      setInvoices(prev => [finalInv, ...prev.filter(inv => inv.id !== finalInv.id)]);
       setSelectedInvoice(finalInv);
       setShowPrintModal('thermal'); // Default show thermal receipt instantly for instant physical operations
       resetPOS();
+      setRefreshKey(prev => prev + 1);
     } catch (e: any) {
       setErrorText(e.message || 'Payment processing crashed.');
     }
@@ -1145,7 +1169,7 @@ Thank you for your business!`;
           product_id: item.product.id,
           product_name: item.product.name,
           sku: item.product.sku,
-          unit_price: item.product.selling_price,
+          unit_price: getItemUnitPrice(item),
           quantity: item.quantity,
           discount: item.discount || 0
         }))
@@ -1181,7 +1205,8 @@ Thank you for your business!`;
           created_at: new Date().toISOString()
         },
         quantity: qi.quantity,
-        discount: qi.discount || 0
+        discount: qi.discount || 0,
+        unitPrice: qi.unit_price
       };
     });
 
@@ -1742,55 +1767,142 @@ Thank you for choosing Majestic Computers!`;
             </div>
 
             {/* Cart Items List */}
-            <div className="max-h-[300px] overflow-y-auto space-y-2 pr-1" id="cart-item-list">
+            <div className="max-h-[340px] overflow-y-auto space-y-2.5 pr-1" id="cart-item-list">
               {cart.length === 0 ? (
                 <div className="py-12 text-center text-xs text-zinc-400 bg-zinc-50 rounded-2xl border border-dashed border-zinc-200">
                   Sales basket is currently empty.<br />Add catalog hardware from the left panel.
                 </div>
               ) : (
-                cart.map((item, idx) => (
-                  <div key={idx} className="p-3 bg-zinc-50 border border-zinc-150 rounded-2xl flex justify-between gap-3 text-xs">
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="font-bold text-zinc-900 truncate tracking-tight">{item.product.name}</div>
-                      <div className="flex items-center gap-2 text-[10px] text-zinc-550">
-                        <span>Unit: Rs. {item.product.selling_price.toLocaleString()}</span>
-                        <span>•</span>
-                        <span className="text-amber-600 font-medium">Disc: Rs. {item.discount}</span>
+                cart.map((item, idx) => {
+                  const currentPrice = getItemUnitPrice(item);
+                  const isPriceModified = typeof item.unitPrice === 'number' && item.unitPrice !== item.product.selling_price;
+                  const lineTotal = Math.max(0, (currentPrice - item.discount) * item.quantity);
+
+                  return (
+                    <div key={idx} className="p-3 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-2.5 text-xs hover:border-zinc-300 transition-all shadow-2xs">
+                      {/* Top row: Title, SKU, Status & Remove Button */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-zinc-900 truncate tracking-tight text-[13px]">{item.product.name}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 mt-0.5">
+                            <span className="font-mono bg-zinc-200/70 text-zinc-700 px-1.5 py-0.2 rounded font-semibold">{item.product.sku}</span>
+                            <span>•</span>
+                            <span className={isPriceModified ? "line-through text-zinc-400 font-medium" : "text-zinc-600 font-medium"}>
+                              Catalog: Rs. {item.product.selling_price.toLocaleString()}
+                            </span>
+                            {isPriceModified && (
+                              <span className="text-[9px] font-bold bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded border border-amber-300">
+                                Custom Rate
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <button
+                          type="button"
+                          onClick={() => removeFromCart(idx)}
+                          className="text-zinc-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors cursor-pointer shrink-0"
+                          title="Remove item from basket"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Middle Box: Editable Unit Selling Price & Line Total */}
+                      <div className="bg-white p-2.5 rounded-xl border border-zinc-200 space-y-1.5 shadow-2xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <label className="font-bold text-zinc-700 flex items-center gap-1" title="Type to change unit price">
+                            <Pencil className="w-3 h-3 text-indigo-600" />
+                            <span>Billing Unit Price (Rs.):</span>
+                          </label>
+                          {isPriceModified && (
+                            <button
+                              type="button"
+                              onClick={() => resetItemPriceToDefault(idx)}
+                              className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer"
+                              title="Reset back to catalog price"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Reset Default</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1 min-w-0">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold pointer-events-none">Rs.</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={item.unitPrice !== undefined ? (item.unitPrice === 0 ? '' : item.unitPrice) : item.product.selling_price}
+                              onChange={(e) => updateItemPrice(idx, e.target.value)}
+                              className={`w-full bg-zinc-50 border ${
+                                isPriceModified ? 'border-amber-400 bg-amber-50/40 text-amber-950 font-bold ring-1 ring-amber-300' : 'border-zinc-250 text-zinc-900 font-bold'
+                              } text-sm pl-8 pr-2.5 py-1.5 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all font-mono tracking-tight [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
+                              placeholder="0.00"
+                              title="Enter unit selling price"
+                            />
+                          </div>
+
+                          <div className="text-right shrink-0 pl-1">
+                            <span className="text-[9px] text-zinc-400 block font-normal leading-tight">Line Total</span>
+                            <span className="font-extrabold text-zinc-900 text-sm font-mono whitespace-nowrap">
+                              Rs. {lineTotal.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom row: Qty stepper & Item Discount */}
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        {/* Qty Stepper */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-zinc-500 font-bold">Qty:</span>
+                          <div className="flex items-center border border-zinc-250 rounded-lg bg-white overflow-hidden shadow-2xs">
+                            <button 
+                              type="button"
+                              onClick={() => updateQuantity(idx, -1)}
+                              className="p-1.5 hover:bg-zinc-100 text-zinc-600 transition-colors cursor-pointer"
+                              title="Decrease Quantity"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="px-2.5 font-bold text-zinc-800 text-xs min-w-[24px] text-center font-mono">{item.quantity}</span>
+                            <button 
+                              type="button"
+                              onClick={() => updateQuantity(idx, 1)}
+                              className="p-1.5 hover:bg-zinc-100 text-zinc-600 transition-colors cursor-pointer"
+                              title="Increase Quantity"
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Item Discount */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-zinc-500 font-bold flex items-center gap-0.5">
+                            <Tag className="w-3 h-3 text-amber-500" />
+                            <span>Disc:</span>
+                          </span>
+                          <div className="relative w-24">
+                            <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-bold pointer-events-none">Rs.</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={item.discount || ''}
+                              onChange={(e) => updateItemDiscount(idx, e.target.value)}
+                              className="w-full bg-white border border-zinc-250 text-xs pl-6 pr-1.5 py-1 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500 text-right text-zinc-700 font-semibold font-mono [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              title="Discount per unit"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
-
-                    <div className="flex flex-col items-end gap-1 px-1 justify-between shrink-0">
-                      {/* Qty controller buttons */}
-                      <div className="flex items-center border border-zinc-200 rounded-lg bg-white overflow-hidden">
-                        <button 
-                          onClick={() => updateQuantity(idx, -1)}
-                          className="p-1 hover:bg-zinc-100 text-zinc-500 transition-colors"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="px-2.5 font-bold text-zinc-800 text-[11px]">{item.quantity}</span>
-                        <button 
-                          onClick={() => updateQuantity(idx, 1)}
-                          className="p-1 hover:bg-zinc-100 text-zinc-500 transition-colors"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* Custom input item discount */}
-                      <div className="flex items-center gap-1">
-                        <Tag className="w-3 h-3 text-zinc-400" />
-                        <input
-                          type="number"
-                          placeholder="Disc"
-                          value={item.discount || ''}
-                          onChange={(e) => updateItemDiscount(idx, e.target.value)}
-                          className="w-16 bg-white border border-zinc-200 text-[10px] px-1 py-0.5 rounded text-right tracking-tight text-zinc-600 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -2490,11 +2602,17 @@ Thank you for choosing Majestic Computers!`;
                       {(selectedInvoice?.invoice_items || []).map((item, index) => (
                         <tr key={index} className="border-b border-zinc-100 mt-1">
                           <td className="py-1">
-                            <div>{item.product_name}</div>
+                            <div className="font-bold text-zinc-900">{item.product_name}</div>
+                            {item.sku && <div className="text-[8px] text-zinc-500 font-mono">SKU: {item.sku}</div>}
+                            {item.quantity > 1 && (
+                              <div className="text-[8px] text-zinc-600">
+                                @ Rs. {(item.unit_price - item.discount).toLocaleString()} each
+                              </div>
+                            )}
                             {item.discount > 0 && <div className="text-[8px] text-zinc-500">-Rs. {item.discount} item discount</div>}
                           </td>
-                          <td className="py-1 text-center">{item.quantity}</td>
-                          <td className="py-1 text-right">Rs. {((item.unit_price - item.discount) * item.quantity).toLocaleString()}</td>
+                          <td className="py-1 text-center font-semibold">{item.quantity}</td>
+                          <td className="py-1 text-right font-bold">Rs. {((item.unit_price - item.discount) * item.quantity).toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
