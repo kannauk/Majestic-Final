@@ -112,6 +112,7 @@ export default function Reports({ user, activeBranch }: ReportsProps) {
   const salesReportRows = useMemo(() => {
     return filteredInvoicesByDate.map(inv => {
       const items = invoiceItems.filter(itm => itm.invoice_id === inv.id);
+      const isVoid = inv.status === 'void' || inv.status === 'deleted';
       return {
         invoiceNo: inv.invoice_no,
         date: (() => { const d = new Date(inv.created_at); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(),
@@ -121,7 +122,12 @@ export default function Reports({ user, activeBranch }: ReportsProps) {
         tax: inv.tax,
         discount: inv.discount,
         total: inv.total,
-        status: inv.payment_status,
+        paymentStatus: inv.payment_status,
+        status: inv.status || 'active',
+        isVoid,
+        voidedBy: inv.voided_by,
+        voidedAt: inv.voided_at,
+        voidReason: inv.void_reason,
         items: items.map(itm => {
           let pName = itm.product_name;
           if (!pName || pName === 'Unknown Product' || pName === 'Unknown') {
@@ -178,9 +184,9 @@ export default function Reports({ user, activeBranch }: ReportsProps) {
     }));
   }, [filteredRepairsByDate]);
 
-  // Total summary calculations
+  // Total summary calculations (excluding voided invoices from net revenue)
   const totalSalesVolume = useMemo(() => {
-    return salesReportRows.reduce((sum, r) => sum + r.total, 0);
+    return salesReportRows.filter(r => !r.isVoid).reduce((sum, r) => sum + r.total, 0);
   }, [salesReportRows]);
 
   const totalInventoryAssetValue = useMemo(() => {
@@ -345,8 +351,22 @@ export default function Reports({ user, activeBranch }: ReportsProps) {
               </thead>
               <tbody className="divide-y divide-zinc-100 text-zinc-700">
                 {salesReportRows.map((r, idx) => (
-                  <tr key={idx} className="hover:bg-zinc-50/50">
-                    <td className="py-2.5 font-bold font-mono text-zinc-900">{r.invoiceNo}</td>
+                  <tr key={idx} className={`hover:bg-zinc-50/50 ${r.isVoid ? 'bg-rose-50/30' : ''}`}>
+                    <td className="py-2.5 font-bold font-mono text-zinc-900">
+                      <div className="flex items-center gap-1.5">
+                        <span className={r.isVoid ? 'line-through text-zinc-400' : ''}>{r.invoiceNo}</span>
+                        {r.isVoid && (
+                          <span className="text-[9px] font-black uppercase bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200">
+                            VOIDED
+                          </span>
+                        )}
+                      </div>
+                      {r.isVoid && r.voidReason && (
+                        <span className="text-[9.5px] text-rose-700 font-sans block mt-0.5 max-w-xs">
+                          Reason: {r.voidReason} {r.voidedBy ? `(${r.voidedBy})` : ''}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2.5 font-mono text-zinc-445">{r.date}</td>
                     <td className="py-2.5 font-semibold text-zinc-900">{r.client}</td>
                     <td className="py-2.5 text-zinc-650">{r.branch}</td>
@@ -365,8 +385,25 @@ export default function Reports({ user, activeBranch }: ReportsProps) {
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 text-right font-mono text-zinc-455">Rs. {r.tax.toLocaleString()}</td>
-                    <td className="py-2.5 text-right font-black text-zinc-900">Rs. {r.total.toLocaleString()}</td>
+                    <td className="py-2.5 text-right font-mono text-zinc-455">
+                      <span className={r.isVoid ? 'line-through text-zinc-400' : ''}>
+                        Rs. {r.tax.toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="py-2.5 text-right font-black text-zinc-900">
+                      {r.isVoid ? (
+                        <div className="text-right">
+                          <span className="line-through text-zinc-400 text-xs font-semibold">
+                            Rs. {r.total.toLocaleString()}
+                          </span>
+                          <span className="block text-[10px] text-rose-600 font-bold uppercase">
+                            (Excluded from total)
+                          </span>
+                        </div>
+                      ) : (
+                        <span>Rs. {r.total.toLocaleString()}</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

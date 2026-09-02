@@ -120,7 +120,7 @@ export default function Dashboard({ user, activeBranch }: DashboardProps) {
       return true;
     };
 
-    const timeFilteredInvoices = branchInvoices.filter(filterByDate);
+    const timeFilteredInvoices = branchInvoices.filter(inv => inv.status !== 'void' && inv.status !== 'deleted').filter(filterByDate);
     const timeFilteredRepairs = branchRepairs.filter(filterByDate);
     const timeFilteredExpenses = branchExpenses.filter(filterByDate);
 
@@ -169,7 +169,7 @@ export default function Dashboard({ user, activeBranch }: DashboardProps) {
   const topSellingProducts = useMemo(() => {
     const counts: Record<string, { name: string; sku: string; qty: number; sales: number }> = {};
     
-    branchInvoices.forEach(inv => {
+    branchInvoices.filter(inv => inv.status !== 'void' && inv.status !== 'deleted').forEach(inv => {
       const items = invoiceItems.filter(item => item.invoice_id === inv.id);
       items.forEach(item => {
         if (!counts[item.product_id]) {
@@ -200,7 +200,7 @@ export default function Dashboard({ user, activeBranch }: DashboardProps) {
 
     return months.map(m => {
       let monthlyRevenue = 0;
-      branchInvoices.forEach(inv => {
+      branchInvoices.filter(inv => inv.status !== 'void' && inv.status !== 'deleted').forEach(inv => {
         if (inv.created_at && inv.refund_status !== 'fully_refunded') {
           const invDate = new Date(inv.created_at);
           if (invDate.getMonth() === m.month && invDate.getFullYear() === m.year) {

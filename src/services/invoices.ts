@@ -506,4 +506,147 @@ export const processSalesReturn = async (
   return finalInvoice;
 };
 
+// In-flight tracking to prevent simultaneous duplicate void actions on the same invoice
+const activeVoidsInFlight = new Set<string>();
+
+export const voidSalesInvoice = async (
+  invoiceId: string,
+  adminUser: { id?: string; name: string; role: string },
+  reason: string
+): Promise<Invoice> => {
+  // 1. Role Authorization Check (Backend/Service level enforcement)
+  if (adminUser.role !== 'super_admin' && adminUser.role !== 'branch_admin') {
+    throw new Error('Access Denied: Only users with the ADMIN role (Super Admin / Branch Admin) can delete or void sales invoices.');
+  }
+
+  if (!reason || !reason.trim()) {
+    throw new Error('An administrative void reason is required.');
+  }
+
+  // 2. Concurrency lock to prevent duplicate double-click void requests
+  if (activeVoidsInFlight.has(invoiceId)) {
+    throw new Error('Invoice void operation already in progress. Please wait.');
+  }
+  activeVoidsInFlight.add(invoiceId);
+
+  try {
+    if (!supabase) {
+      throw new Error('Database connection is offline.');
+    }
+
+    // 3. Fetch invoice and verify it is currently ACTIVE
+    const { data: invoice, error: invErr } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .single();
+
+    if (invErr || !invoice) {
+      throw new Error('Sales invoice record not found.');
+    }
+
+    if (invoice.status === 'void' || invoice.status === 'deleted') {
+      throw new Error(`Invoice #${invoice.invoice_no} has already been voided. Stock cannot be restored twice.`);
+    }
+
+    // 4. Fetch invoice items to calculate restoration amounts
+    const { data: items, error: itemsErr } = await supabase
+      .from('invoice_items')
+      .select('*')
+      .eq('invoice_id', invoiceId);
+
+    if (itemsErr) throw itemsErr;
+
+    const branchId = invoice.branch_id;
+
+    // 5. Restore stock for each sold item exactly once
+    if (items && items.length > 0 && branchId) {
+      for (const item of items) {
+        if (!item.product_id || Number(item.quantity) <= 0) continue;
+
+        // Fetch current stock
+        const { data: stock } = await supabase
+          .from('product_stocks')
+          .select('quantity')
+          .eq('product_id', item.product_id)
+          .eq('branch_id', branchId)
+          .maybeSingle();
+
+        if (stock) {
+          const newQty = Number(stock.quantity) + Number(item.quantity);
+          await supabase
+            .from('product_stocks')
+            .update({ quantity: newQty })
+            .eq('product_id', item.product_id)
+            .eq('branch_id', branchId);
+        }
+
+        // Fetch product names/sku if needed for inventory log
+        let prodName = item.product_name;
+        let prodSku = item.sku;
+        if (!prodName || prodName === 'Unknown Product') {
+          try {
+            const { data: p } = await supabase.from('products').select('name, sku').eq('id', item.product_id).maybeSingle();
+            if (p) {
+              prodName = p.name;
+              prodSku = p.sku;
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        // Insert inventory audit log
+        try {
+          await supabase.from('inventory_logs').insert({
+            product_id: item.product_id,
+            product_name: prodName || 'Product',
+            sku: prodSku || '',
+            branch_id: branchId,
+            branch_name: invoice.branch_name || 'Showroom',
+            quantity: Number(item.quantity),
+            type: 'restock',
+            description: `Stock restored from Voided Invoice #${invoice.invoice_no} by ${adminUser.name}. Reason: ${reason.trim()}`
+          });
+        } catch (logErr) {
+          console.error('Inventory log error during void:', logErr);
+        }
+      }
+    }
+
+    // 6. Atomically mark the invoice as VOID
+    const voidTime = new Date().toISOString();
+    const updatedNotes = invoice.notes 
+      ? `${invoice.notes}\n[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${reason.trim()}]`
+      : `[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${reason.trim()}]`;
+
+    const { data: updatedInvoice, error: updateErr } = await supabase
+      .from('invoices')
+      .update({
+        status: 'void',
+        payment_status: 'unpaid',
+        voided_by: adminUser.name,
+        voided_at: voidTime,
+        void_reason: reason.trim(),
+        notes: updatedNotes
+      })
+      .eq('id', invoiceId)
+      .select('*')
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    const completed: Invoice = {
+      ...updatedInvoice,
+      invoice_items: items || []
+    };
+
+    return completed;
+  } finally {
+    activeVoidsInFlight.delete(invoiceId);
+  }
+};
+
+export const deleteSalesInvoice = voidSalesInvoice;
+
 

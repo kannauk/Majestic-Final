@@ -91,6 +91,7 @@ export interface Customer {
 export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'split';
 export type PaymentStatus = 'paid' | 'partially_paid' | 'unpaid';
 export type RefundStatus = 'none' | 'fully_refunded' | 'partially_refunded';
+export type InvoiceStatus = 'active' | 'void' | 'deleted';
 
 export interface SplitPaymentDetail {
   cash: number;
@@ -112,10 +113,14 @@ export interface Invoice {
   total: number;
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
+  status?: InvoiceStatus;
   paid_amount: number;
   split_payment_details?: SplitPaymentDetail;
   refund_status: RefundStatus;
   refunded_amount?: number;
+  voided_by?: string;
+  voided_at?: string;
+  void_reason?: string;
   created_by_name: string;
   created_at: string;
   notes?: string;

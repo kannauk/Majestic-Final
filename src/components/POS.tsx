@@ -7,7 +7,8 @@ import {
   Percent, Grid, Printer, Mail, Download, History, Tag, FileText, Landmark,
   MessageCircle, Image as ImageIcon, Share2, Copy,
   FileSpreadsheet, FileUp, FileDown, X, Users, UserPlus, CheckCircle, Upload, Pencil,
-  Eye, EyeOff, PackageX, MapPin, CornerUpLeft, Clock, Calendar, ArrowRight, FileCheck, Send, Check, RotateCcw
+  Eye, EyeOff, PackageX, MapPin, CornerUpLeft, Clock, Calendar, ArrowRight, FileCheck, Send, Check, RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { User, Branch, Product, ProductStock, Customer, PaymentMethod, Invoice, SplitPaymentDetail, Quotation, QuotationItem } from '../types';
 import { exportToCSV, parseCSV } from '../utils/excelHelper';
@@ -18,7 +19,7 @@ import { getCustomers, createCustomer, updateCustomer } from '../services/custom
 import { getProducts } from '../services/products';
 import { getProductStocks } from '../services/productStocks';
 import { getSetting } from '../services/settings';
-import { getInvoices, updateInvoice, modifyInvoice, processSalesReturn } from '../services/invoices';
+import { getInvoices, updateInvoice, modifyInvoice, processSalesReturn, voidSalesInvoice } from '../services/invoices';
 import { getQuotations, createQuotation, updateQuotation, updateQuotationStatus, deleteQuotation } from '../services/quotations';
 import { updateProductStock } from '../services/productStocks';
 import { processSale } from '../services/sales';
@@ -93,6 +94,8 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeTab, setActiveTab] = useState<'checkout' | 'history' | 'quotations'>('checkout');
+  const [isProcessingSale, setIsProcessingSale] = useState(false);
+  const isProcessingSaleRef = useRef(false);
 
   // Sales Quotation Management states
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -633,6 +636,68 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
     }
   };
 
+  // Admin Invoice Delete / Void States & Handlers
+  const [showDeleteInvoiceModal, setShowDeleteInvoiceModal] = useState(false);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
+  const [deleteInvoiceReason, setDeleteInvoiceReason] = useState('');
+  const [isDeletingInvoice, setIsDeletingInvoice] = useState(false);
+  const [deleteInvoiceError, setDeleteInvoiceError] = useState<string | null>(null);
+
+  const handleStartDeleteInvoice = (inv: Invoice) => {
+    if (user.role !== 'super_admin' && user.role !== 'branch_admin') {
+      alert('Access Denied: Only Admin users (Super Admin / Branch Admin) can delete sales invoices.');
+      return;
+    }
+    if (inv.status === 'void' || inv.status === 'deleted') {
+      alert(`Invoice #${inv.invoice_no} has already been voided.`);
+      return;
+    }
+    setInvoiceToDelete(inv);
+    setDeleteInvoiceReason('');
+    setDeleteInvoiceError(null);
+    setShowDeleteInvoiceModal(true);
+  };
+
+  const handleConfirmDeleteInvoice = async () => {
+    if (!invoiceToDelete) return;
+    if (!deleteInvoiceReason.trim()) {
+      setDeleteInvoiceError('Please provide a mandatory reason for deleting/voiding this invoice.');
+      return;
+    }
+
+    setIsDeletingInvoice(true);
+    setDeleteInvoiceError(null);
+
+    try {
+      const updatedInvoice = await voidSalesInvoice(
+        invoiceToDelete.id,
+        { id: user.id, name: user.name, role: user.role },
+        deleteInvoiceReason.trim()
+      );
+
+      // Update local invoice state
+      setInvoices(prev => prev.map(inv => inv.id === invoiceToDelete.id ? updatedInvoice : inv));
+
+      // Refresh product stocks and products
+      getProductStocks().then(setProductStocks).catch(console.error);
+      getProducts().then(setAllProducts).catch(console.error);
+
+      // If this invoice is open in print/preview modal, update it
+      if (selectedInvoice && selectedInvoice.id === invoiceToDelete.id) {
+        setSelectedInvoice(updatedInvoice);
+      }
+
+      setShowDeleteInvoiceModal(false);
+      setInvoiceToDelete(null);
+      setDeleteInvoiceReason('');
+    } catch (err: any) {
+      console.error('Failed to delete invoice:', err);
+      setDeleteInvoiceError(err.message || 'Failed to delete/void sales invoice.');
+    } finally {
+      setIsDeletingInvoice(false);
+    }
+  };
+
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
 
@@ -995,6 +1060,11 @@ Thank you for your business!`;
 
   // Checkout call
   const handleCheckout = async () => {
+    // 1. Guard against duplicate submissions if already processing
+    if (isProcessingSale || isProcessingSaleRef.current) {
+      return;
+    }
+
     if (cart.length === 0) {
       setErrorText('Retail POS basket is empty.');
       return;
@@ -1029,7 +1099,13 @@ Thank you for your business!`;
       splitDetails = { cash: cashSplit, card: cardSplit, bank: bankSplit };
     }
 
+    // Set lock immediately to block rapid repeat clicks
+    isProcessingSaleRef.current = true;
+    setIsProcessingSale(true);
+    setErrorText(null);
+
     try {
+      const checkoutRequestId = `pos-req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const itemsParam = cart.map(item => ({
         productId: item.product.id,
         productName: item.product.name,
@@ -1040,6 +1116,7 @@ Thank you for your business!`;
       }));
 
       const finalInv = await processSale({
+        requestId: checkoutRequestId,
         branchId: activeBranch.id,
         customerName,
         customerPhone,
@@ -1053,13 +1130,18 @@ Thank you for your business!`;
         notes: billingNote
       });
 
+      // Clear the cart immediately so the bill cannot be re-submitted
+      resetPOS();
       setInvoices(prev => [finalInv, ...prev.filter(inv => inv.id !== finalInv.id)]);
       setSelectedInvoice(finalInv);
       setShowPrintModal('thermal'); // Default show thermal receipt instantly for instant physical operations
-      resetPOS();
       setRefreshKey(prev => prev + 1);
     } catch (e: any) {
-      setErrorText(e.message || 'Payment processing crashed.');
+      console.error('POS checkout error:', e);
+      setErrorText(e.message || 'Payment processing failed. Please try again.');
+    } finally {
+      isProcessingSaleRef.current = false;
+      setIsProcessingSale(false);
     }
   };
 
@@ -2059,7 +2141,8 @@ Thank you for choosing Majestic Computers!`;
               <button
                 type="button"
                 onClick={handleOpenSaveQuotationModal}
-                className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs py-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
+                disabled={isProcessingSale || cart.length === 0}
+                className="w-full bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed text-amber-900 border border-amber-300 font-bold text-xs py-3 rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 uppercase tracking-wider cursor-pointer"
                 title="Generate quotation without deducting inventory"
               >
                 <FileSpreadsheet className="w-4 h-4 text-amber-700" />
@@ -2068,10 +2151,26 @@ Thank you for choosing Majestic Computers!`;
 
               <button
                 type="button"
+                id="pos-complete-sale-btn"
                 onClick={handleCheckout}
-                className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md uppercase tracking-wider cursor-pointer"
+                disabled={isProcessingSale || cart.length === 0 || totalAmount <= 0}
+                className={`w-full font-bold text-xs py-3 rounded-xl transition-all uppercase tracking-wider flex items-center justify-center gap-2 ${
+                  isProcessingSale
+                    ? 'bg-zinc-800 text-zinc-200 cursor-not-allowed shadow-inner opacity-90'
+                    : cart.length === 0 || totalAmount <= 0
+                    ? 'bg-zinc-250 text-zinc-400 cursor-not-allowed shadow-none'
+                    : 'bg-zinc-900 hover:bg-zinc-800 text-white cursor-pointer shadow-md'
+                }`}
+                title={isProcessingSale ? 'Processing and saving bill...' : 'Complete sale and generate invoice receipt'}
               >
-                Complete Sale & Issue Bill
+                {isProcessingSale ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
+                    <span>Saving Bill...</span>
+                  </>
+                ) : (
+                  <span>Complete Sale & Issue Bill</span>
+                )}
               </button>
             </div>
           </div>
@@ -2100,107 +2199,142 @@ Thank you for choosing Majestic Computers!`;
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 text-zinc-700">
-                {invoices.map(inv => (
-                  <tr key={inv.id} className="hover:bg-zinc-50/50">
-                    <td className="py-3 font-semibold font-mono text-zinc-900">{inv.invoice_no}</td>
-                    <td className="py-3">
-                      <div className="font-semibold text-zinc-900">{inv.customer_name}</div>
-                      {inv.customer_phone && <div className="text-[10px] text-zinc-400 mt-0.5">{inv.customer_phone}</div>}
-                      {inv.notes && (
-                        <div className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 mt-1 font-sans max-w-xs block">
-                          <strong>Note:</strong> {inv.notes}
+                {invoices.map(inv => {
+                  const isVoid = inv.status === 'void' || inv.status === 'deleted';
+                  return (
+                    <tr key={inv.id} className={`hover:bg-zinc-50/50 transition-colors ${isVoid ? 'bg-rose-50/20' : ''}`}>
+                      <td className="py-3 font-semibold font-mono text-zinc-900">
+                        <div className="flex items-center gap-1.5">
+                          <span className={isVoid ? 'line-through text-zinc-400' : ''}>{inv.invoice_no}</span>
+                          {isVoid && (
+                            <span className="text-[9px] font-black uppercase bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200">
+                              VOIDED
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </td>
-                    <td className="py-3 text-center">
-                      <span className="font-medium uppercase bg-zinc-100 px-2.5 py-1 rounded text-[10px]">
-                        {inv.payment_method === 'bank_transfer' ? 'Bank' : inv.payment_method}
-                      </span>
-                    </td>
-                    <td className="py-3 text-center">
-                      {inv.refund_status === 'fully_refunded' ? (
-                        <span className="text-[10px] bg-red-100 text-red-750 px-2 py-0.5 rounded font-extrabold uppercase">
-                          Refunded
+                        {isVoid && inv.void_reason && (
+                          <div className="text-[9.5px] text-rose-700 font-sans mt-0.5 max-w-xs">
+                            Voided by {inv.voided_by || 'Admin'}: {inv.void_reason}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3">
+                        <div className={`font-semibold ${isVoid ? 'text-zinc-500 line-through' : 'text-zinc-900'}`}>{inv.customer_name}</div>
+                        {inv.customer_phone && <div className="text-[10px] text-zinc-400 mt-0.5">{inv.customer_phone}</div>}
+                        {inv.notes && (
+                          <div className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 mt-1 font-sans max-w-xs block">
+                            <strong>Note:</strong> {inv.notes}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 text-center">
+                        <span className="font-medium uppercase bg-zinc-100 px-2.5 py-1 rounded text-[10px]">
+                          {inv.payment_method === 'bank_transfer' ? 'Bank' : inv.payment_method}
                         </span>
-                      ) : (
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
-                          inv.payment_status === 'paid' ? 'bg-green-100 text-green-755' : 'bg-amber-100 text-amber-705'
-                        }`}>
-                          {inv.payment_status}
+                      </td>
+                      <td className="py-3 text-center">
+                        {isVoid ? (
+                          <span className="text-[10px] bg-rose-100 text-rose-750 px-2 py-0.5 rounded font-extrabold uppercase border border-rose-200">
+                            VOIDED
+                          </span>
+                        ) : inv.refund_status === 'fully_refunded' ? (
+                          <span className="text-[10px] bg-red-100 text-red-750 px-2 py-0.5 rounded font-extrabold uppercase">
+                            Refunded
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                            inv.payment_status === 'paid' ? 'bg-green-100 text-green-755' : 'bg-amber-100 text-amber-705'
+                          }`}>
+                            {inv.payment_status}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 text-right font-extrabold text-zinc-900">
+                        <span className={isVoid ? 'line-through text-zinc-400' : ''}>
+                          Rs. {inv.total.toLocaleString()}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-3 text-right font-extrabold text-zinc-900">
-                      Rs. {inv.total.toLocaleString()}
-                    </td>
-                    <td className="py-3 text-right text-zinc-540">{inv.created_at.split('T')[0]}</td>
-                    <td className="py-3 text-right space-x-1 whitespace-nowrap">
-                      {/* WhatsApp trigger */}
-                      <button
-                        onClick={() => prepareWhatsAppBill(inv)}
-                        title="Send Bill via WhatsApp"
-                        className="p-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
-                      >
-                        <MessageCircle className="w-4 h-4 inline" />
-                      </button>
-
-                      {/* Print receipts trigger */}
-                      <button
-                        onClick={() => {
-                          setSelectedInvoice(inv);
-                          setShowPrintModal('thermal');
-                        }}
-                        title="Print 80mm Custom Receipt"
-                        className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors"
-                      >
-                        <Printer className="w-4 h-4 inline" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedInvoice(inv);
-                          setShowPrintModal('a4');
-                        }}
-                        title="Corporate A4 Bill Layout"
-                        className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors text-[11px]"
-                      >
-                        A4
-                      </button>
-
-                      {/* Refund Trigger */}
-                      {inv.refund_status !== 'fully_refunded' && (
+                      </td>
+                      <td className="py-3 text-right text-zinc-540">{inv.created_at.split('T')[0]}</td>
+                      <td className="py-3 text-right space-x-1 whitespace-nowrap">
+                        {/* WhatsApp trigger */}
                         <button
-                          onClick={() => handleStartRefund(inv)}
-                          className="p-1 text-zinc-400 hover:text-red-500 hover:bg-zinc-100 rounded transition-colors"
-                          title="Authorize Gated Refund"
+                          onClick={() => prepareWhatsAppBill(inv)}
+                          title="Send Bill via WhatsApp"
+                          className="p-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded transition-colors"
                         >
-                          <RefreshCcw className="w-3.5 h-3.5 inline" />
+                          <MessageCircle className="w-4 h-4 inline" />
                         </button>
-                      )}
 
-                      {/* Admin Modify Invoice Trigger */}
-                      {(user.role === 'super_admin' || user.role === 'branch_admin') && (
+                        {/* Print receipts trigger */}
                         <button
-                          onClick={() => handleStartAdminEdit(inv)}
-                          className="p-1 text-zinc-400 hover:text-indigo-600 hover:bg-zinc-100 rounded transition-colors"
-                          title="Modify Invoice (Admin)"
+                          onClick={() => {
+                            setSelectedInvoice(inv);
+                            setShowPrintModal('thermal');
+                          }}
+                          title="Print 80mm Custom Receipt"
+                          className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors"
                         >
-                          <Pencil className="w-3.5 h-3.5 inline" />
+                          <Printer className="w-4 h-4 inline" />
                         </button>
-                      )}
+                        <button
+                          onClick={() => {
+                            setSelectedInvoice(inv);
+                            setShowPrintModal('a4');
+                          }}
+                          title="Corporate A4 Bill Layout"
+                          className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors text-[11px]"
+                        >
+                          A4
+                        </button>
 
-                      {/* Admin Sales Return Trigger */}
-                      {(user.role === 'super_admin' || user.role === 'branch_admin') && inv.refund_status !== 'fully_refunded' && (
-                        <button
-                          onClick={() => handleStartSalesReturn(inv)}
-                          className="p-1 text-zinc-400 hover:text-orange-600 hover:bg-zinc-100 rounded transition-colors"
-                          title="Admin Sales Return (Granular)"
-                        >
-                          <CornerUpLeft className="w-3.5 h-3.5 inline" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                        {/* Refund Trigger (Only if active and not refunded) */}
+                        {!isVoid && inv.refund_status !== 'fully_refunded' && (
+                          <button
+                            onClick={() => handleStartRefund(inv)}
+                            className="p-1 text-zinc-400 hover:text-red-500 hover:bg-zinc-100 rounded transition-colors"
+                            title="Authorize Gated Refund"
+                          >
+                            <RefreshCcw className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
+
+                        {/* Admin Modify Invoice Trigger (Only if active) */}
+                        {(user.role === 'super_admin' || user.role === 'branch_admin') && !isVoid && (
+                          <button
+                            onClick={() => handleStartAdminEdit(inv)}
+                            className="p-1 text-zinc-400 hover:text-indigo-600 hover:bg-zinc-100 rounded transition-colors"
+                            title="Modify Invoice (Admin)"
+                          >
+                            <Pencil className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
+
+                        {/* Admin Sales Return Trigger (Only if active) */}
+                        {(user.role === 'super_admin' || user.role === 'branch_admin') && !isVoid && inv.refund_status !== 'fully_refunded' && (
+                          <button
+                            onClick={() => handleStartSalesReturn(inv)}
+                            className="p-1 text-zinc-400 hover:text-orange-600 hover:bg-zinc-100 rounded transition-colors"
+                            title="Admin Sales Return (Granular)"
+                          >
+                            <CornerUpLeft className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
+
+                        {/* Admin Delete / Void Invoice Trigger (ADMIN ONLY) */}
+                        {(user.role === 'super_admin' || user.role === 'branch_admin') && (
+                          <button
+                            onClick={() => handleStartDeleteInvoice(inv)}
+                            disabled={isVoid}
+                            className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-400 disabled:hover:bg-transparent"
+                            title={isVoid ? 'Invoice has already been deleted/voided' : 'Delete Sales Invoice & Restore Stock (Admin Only)'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -4341,6 +4475,170 @@ Thank you for choosing Majestic Computers!`;
               >
                 <Send className="w-4 h-4" />
                 <span>Send to WhatsApp</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN-ONLY SALES INVOICE DELETE / VOID CONFIRMATION MODAL */}
+      {showDeleteInvoiceModal && invoiceToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-55 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 shadow-2xl max-w-md w-full space-y-4 border border-rose-100 my-auto animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex justify-between items-start border-b border-rose-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-rose-100 text-rose-700 rounded-2xl shrink-0">
+                  <Trash2 className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h5 className="text-base font-black text-zinc-900">Delete Sales Invoice?</h5>
+                  <p className="text-[11px] text-zinc-500 font-medium">
+                    Admin Authorization Required
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  if (!isDeletingInvoice) {
+                    setShowDeleteInvoiceModal(false);
+                    setInvoiceToDelete(null);
+                    setDeleteInvoiceReason('');
+                    setDeleteInvoiceError(null);
+                  }
+                }}
+                disabled={isDeletingInvoice}
+                className="text-zinc-400 hover:text-zinc-700 text-sm font-bold p-1 rounded-lg disabled:opacity-40"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Warning Message */}
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 text-xs text-rose-950 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                Are you sure you want to delete this invoice? This action will reverse the sale and restore stock.
+              </div>
+            </div>
+
+            {/* Invoice Details Card */}
+            <div className="bg-zinc-50 border border-zinc-200/80 rounded-2xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500 font-medium">Invoice Number:</span>
+                <span className="font-mono font-extrabold text-zinc-900 bg-white px-2 py-0.5 rounded-md border border-zinc-200">
+                  {invoiceToDelete.invoice_no}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500 font-medium">Customer Name:</span>
+                <span className="font-bold text-zinc-900">
+                  {invoiceToDelete.customer_name || 'Cash Customer'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500 font-medium">Total Amount:</span>
+                <span className="font-extrabold text-rose-600 text-sm">
+                  Rs. {invoiceToDelete.total.toLocaleString()} LKR
+                </span>
+              </div>
+
+              {invoiceToDelete.invoice_items && invoiceToDelete.invoice_items.length > 0 && (
+                <div className="pt-2 border-t border-zinc-200">
+                  <span className="text-[11px] font-bold text-zinc-700 block mb-1">
+                    Stock Restoration Breakdown:
+                  </span>
+                  <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                    {invoiceToDelete.invoice_items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between text-[11px] text-zinc-600 bg-white px-2 py-1 rounded border border-zinc-150">
+                        <span className="font-medium truncate max-w-[200px]">{item.product_name}</span>
+                        <span className="font-bold text-emerald-700">+{item.quantity} restored</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Reason Input */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-800 flex items-center justify-between">
+                <span>Deletion Reason (Mandatory):</span>
+                <span className="text-[10px] text-zinc-400 font-normal">Audit Log</span>
+              </label>
+
+              {/* Quick Select Reason Tags */}
+              <div className="flex flex-wrap gap-1">
+                {[
+                  'Customer order cancelled',
+                  'Incorrect billing / item error',
+                  'Duplicate invoice entered',
+                  'Payment cancelled'
+                ].map((quickReason) => (
+                  <button
+                    key={quickReason}
+                    type="button"
+                    onClick={() => setDeleteInvoiceReason(quickReason)}
+                    className={`text-[10px] px-2 py-0.5 rounded-md font-semibold transition-all ${
+                      deleteInvoiceReason === quickReason
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
+                    }`}
+                  >
+                    {quickReason}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                rows={2}
+                value={deleteInvoiceReason}
+                onChange={(e) => setDeleteInvoiceReason(e.target.value)}
+                placeholder="Enter reason for deleting this invoice..."
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-2.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500 resize-none font-medium"
+              />
+            </div>
+
+            {deleteInvoiceError && (
+              <div className="p-2.5 bg-rose-100 border border-rose-200 rounded-xl text-xs text-rose-800 font-medium flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{deleteInvoiceError}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+              <button
+                type="button"
+                disabled={isDeletingInvoice}
+                onClick={() => {
+                  setShowDeleteInvoiceModal(false);
+                  setInvoiceToDelete(null);
+                  setDeleteInvoiceReason('');
+                  setDeleteInvoiceError(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-600 hover:bg-zinc-100 transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isDeletingInvoice || !deleteInvoiceReason.trim()}
+                onClick={handleConfirmDeleteInvoice}
+                className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-black tracking-wide transition-all shadow-md disabled:opacity-50 cursor-pointer"
+              >
+                {isDeletingInvoice ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Voiding & Restoring Stock...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm & Delete Invoice</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
