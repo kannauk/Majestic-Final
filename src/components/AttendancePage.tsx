@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   MapPin, Clock, CheckCircle2, XCircle, AlertTriangle, 
   RefreshCw, ShieldCheck, Navigation, ArrowRight, ArrowLeft,
-  Building2, User as UserIcon, Radio, Sparkles
+  Building2, User as UserIcon, Radio, Sparkles, ExternalLink
 } from 'lucide-react';
 import { 
   getStaffByAttendanceToken, 
@@ -98,80 +98,118 @@ export default function AttendancePage({ token }: AttendancePageProps) {
 
     setPunchingType(type);
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const userLat = position.coords.latitude;
-          const userLng = position.coords.longitude;
-          const branchLat = Number(branch.latitude);
-          const branchLng = Number(branch.longitude);
-          const allowedRadius = branch.attendance_radius_meters && branch.attendance_radius_meters > 0 
-            ? branch.attendance_radius_meters 
-            : 5;
+    const onGeoSuccess = async (position: GeolocationPosition) => {
+      try {
+        const userLat = position.coords.latitude;
+        const userLng = position.coords.longitude;
+        const branchLat = Number(branch.latitude);
+        const branchLng = Number(branch.longitude);
+        const allowedRadius = branch.attendance_radius_meters && branch.attendance_radius_meters > 0 
+          ? branch.attendance_radius_meters 
+          : 5;
 
-          // Calculate distance using Haversine formula
-          const distanceMeters = calculateHaversineDistanceMeters(userLat, userLng, branchLat, branchLng);
-          const isWithinRadius = distanceMeters <= allowedRadius;
+        // Calculate distance using Haversine formula
+        const distanceMeters = calculateHaversineDistanceMeters(userLat, userLng, branchLat, branchLng);
+        const isWithinRadius = distanceMeters <= allowedRadius;
 
-          const status: 'approved' | 'denied' = isWithinRadius ? 'approved' : 'denied';
+        const status: 'approved' | 'denied' = isWithinRadius ? 'approved' : 'denied';
 
-          // Save row to attendance_logs (both approved and denied for audit)
-          const savedLog = await recordAttendanceLog({
-            user_id: staffInfo.user.id,
-            user_name: staffInfo.user.name || staffInfo.user.username,
-            branch_id: branch.id,
-            branch_name: branch.name,
-            type,
-            status,
-            latitude: userLat,
-            longitude: userLng,
-            distance_meters: distanceMeters,
-            radius_meters: allowedRadius
+        // Save row to attendance_logs (both approved and denied for audit)
+        const savedLog = await recordAttendanceLog({
+          user_id: staffInfo.user.id,
+          user_name: staffInfo.user.name || staffInfo.user.username,
+          branch_id: branch.id,
+          branch_name: branch.name,
+          type,
+          status,
+          latitude: userLat,
+          longitude: userLng,
+          distance_meters: distanceMeters,
+          radius_meters: allowedRadius
+        });
+
+        // Update local state if approved
+        if (isWithinRadius) {
+          setStaffInfo(prev => prev ? { ...prev, lastLog: savedLog } : null);
+          setPunchResult({
+            status: 'approved',
+            message: `Successfully Checked ${type.toUpperCase()}! Your location was verified within ${distanceMeters}m of ${branch.name}.`,
+            distance: distanceMeters,
+            radius: allowedRadius,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           });
-
-          // Update local state if approved
-          if (isWithinRadius) {
-            setStaffInfo(prev => prev ? { ...prev, lastLog: savedLog } : null);
-            setPunchResult({
-              status: 'approved',
-              message: `Successfully Checked ${type.toUpperCase()}! Your location was verified within ${distanceMeters}m of ${branch.name}.`,
-              distance: distanceMeters,
-              radius: allowedRadius,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            });
-          } else {
-            setPunchResult({
-              status: 'denied',
-              message: `You're ${distanceMeters}m away from ${branch.name}. You must be within ${allowedRadius}m to record attendance.`,
-              distance: distanceMeters,
-              radius: allowedRadius,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            });
-          }
-        } catch (recordErr: any) {
-          console.error('Error saving attendance log:', recordErr);
-          setGeoError('Failed to record attendance to server. Please retry.');
-        } finally {
-          setPunchingType(null);
+        } else {
+          setPunchResult({
+            status: 'denied',
+            message: `You're ${distanceMeters}m away from ${branch.name}. You must be within ${allowedRadius}m to record attendance.`,
+            distance: distanceMeters,
+            radius: allowedRadius,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          });
         }
-      },
-      (positionError) => {
+      } catch (recordErr: any) {
+        console.error('Error saving attendance log:', recordErr);
+        setGeoError('Failed to record attendance to server. Please retry.');
+      } finally {
         setPunchingType(null);
-        console.error('Geolocation error:', positionError);
-        let msg = 'Unable to retrieve your location.';
-        if (positionError.code === positionError.PERMISSION_DENIED) {
-          msg = 'Location access was denied. Please allow location permissions in your browser settings to verify your attendance.';
-        } else if (positionError.code === positionError.POSITION_UNAVAILABLE) {
-          msg = 'GPS signal unavailable. Please ensure your device GPS/Location is enabled and try again.';
-        } else if (positionError.code === positionError.TIMEOUT) {
-          msg = 'Location request timed out. Please check your GPS signal and tap to retry.';
-        }
-        setGeoError(msg);
-      },
+      }
+    };
+
+    const onGeoError = (positionError: GeolocationPositionError) => {
+      const isInsideIframe = typeof window !== 'undefined' && window.self !== window.top;
+      const isPolicyBlocked = (positionError.message && positionError.message.toLowerCase().includes('permissions policy')) || 
+        (positionError.code === 1 && isInsideIframe);
+
+      if (isPolicyBlocked) {
+        setPunchingType(null);
+        setGeoError('GPS access is restricted by the preview iframe permissions policy. Tap below to open in your native browser.');
+        return;
+      }
+
+      // If high accuracy timed out, retry with standard accuracy before giving up
+      if (positionError.code === 3) {
+        navigator.geolocation.getCurrentPosition(
+          onGeoSuccess,
+          (fallbackErr) => {
+            setPunchingType(null);
+            let msg = 'Unable to retrieve your location.';
+            if (fallbackErr.code === 1) {
+              msg = 'Location access was denied. Please allow location permissions in your browser settings to verify your attendance.';
+            } else if (fallbackErr.code === 2) {
+              msg = 'GPS signal unavailable. Please ensure your device GPS/Location is enabled and try again.';
+            } else if (fallbackErr.code === 3) {
+              msg = 'Location request timed out. Please check your GPS signal and tap to retry.';
+            } else if (fallbackErr.message) {
+              msg = fallbackErr.message;
+            }
+            setGeoError(msg);
+          },
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
+        );
+        return;
+      }
+
+      setPunchingType(null);
+      let msg = 'Unable to retrieve your location.';
+      if (positionError.code === 1) {
+        msg = 'Location access was denied. Please click the site settings / lock icon in your browser to allow location access.';
+      } else if (positionError.code === 2) {
+        msg = 'GPS signal unavailable. Please ensure your device GPS/Location is enabled and try again.';
+      } else if (positionError.code === 3) {
+        msg = 'Location request timed out. Please check your GPS signal and tap to retry.';
+      } else if (positionError.message) {
+        msg = positionError.message;
+      }
+      setGeoError(msg);
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      onGeoSuccess,
+      onGeoError,
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
+        timeout: 10000,
+        maximumAge: 10000
       }
     );
   };
@@ -299,9 +337,23 @@ export default function AttendancePage({ token }: AttendancePageProps) {
 
             {/* Geo Error / Notification Banner */}
             {geoError && (
-              <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-start gap-2.5 animate-in fade-in duration-200">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div className="leading-relaxed">{geoError}</div>
+              <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 space-y-2 animate-in fade-in duration-200">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">{geoError}</div>
+                </div>
+                {(typeof window !== 'undefined' && window.self !== window.top) && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => window.open(window.location.href, '_blank')}
+                      className="w-full flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 rounded-xl text-xs transition-all shadow-md cursor-pointer"
+                    >
+                      <span>Open Attendance in Standalone Browser</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 

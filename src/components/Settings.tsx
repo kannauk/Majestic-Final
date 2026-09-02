@@ -3,7 +3,7 @@ import {
   Settings2, MapPin, Percent, Phone, HelpCircle, 
   Database, ShieldAlert, Cpu, Landmark, CheckSquare, Clock,
   Users, UserPlus, Pencil, X, CheckCircle, Tag, Layers, Globe, Mail, FileText, Plus,
-  Navigation, Crosshair, Radio, RotateCw
+  Navigation, Crosshair, Radio, RotateCw, ExternalLink, Compass, Search
 } from 'lucide-react';
 import { User, Branch, CompanySetting, ProductCategory, Brand } from '../types';
 import { getSetting, updateSetting } from '../services/settings';
@@ -57,15 +57,91 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
   const [newBranchLatitude, setNewBranchLatitude] = useState<string>('');
   const [newBranchLongitude, setNewBranchLongitude] = useState<string>('');
   const [newBranchRadius, setNewBranchRadius] = useState<number>(5);
+  const [newBranchQuickPaste, setNewBranchQuickPaste] = useState<string>('');
+  const [editBranchQuickPaste, setEditBranchQuickPaste] = useState<string>('');
+
+  // Sri Lanka Showroom Location Presets
+  const SRI_LANKA_PRESETS = [
+    { label: 'Majestic City (Bambalapitiya)', lat: 6.892582, lng: 79.855843 },
+    { label: 'Liberty Plaza (Kollupitiya)', lat: 6.911832, lng: 79.851912 },
+    { label: 'Kandy (City Centre)', lat: 7.293621, lng: 80.635832 },
+    { label: 'Kurunegala (Main St)', lat: 7.486280, lng: 80.364710 },
+    { label: 'Gampaha (Yakkala Rd)', lat: 7.087310, lng: 79.993950 },
+    { label: 'Negombo (Greens Rd)', lat: 7.208880, lng: 79.835840 },
+    { label: 'Galle (Main St)', lat: 6.036712, lng: 80.217014 },
+    { label: 'Jaffna (Hospital Rd)', lat: 9.661498, lng: 80.025547 }
+  ];
+
+  // Helper to parse coordinates from raw string or Google Maps URL
+  const parseCoordinatesInput = (input: string): { lat: number; lng: number } | null => {
+    if (!input || !input.trim()) return null;
+    const str = input.trim();
+
+    // Match Google Maps URLs: /@6.892582,79.855843 or ?q=6.892582,79.855843 or query=6.892582,79.855843
+    const urlMatch = str.match(/[@?&](?:q|query|ll)?=?(-?\d{1,2}\.\d{3,10}),\s*(-?\d{1,3}\.\d{3,10})/);
+    if (urlMatch && urlMatch[1] && urlMatch[2]) {
+      const lat = parseFloat(urlMatch[1]);
+      const lng = parseFloat(urlMatch[2]);
+      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+    }
+
+    // Match standard "6.892582, 79.855843" or "6.892582 79.855843"
+    const coordMatch = str.match(/(-?\d{1,2}\.\d{3,10})[,\s]+(-?\d{1,3}\.\d{3,10})/);
+    if (coordMatch && coordMatch[1] && coordMatch[2]) {
+      const lat = parseFloat(coordMatch[1]);
+      const lng = parseFloat(coordMatch[2]);
+      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+    }
+
+    return null;
+  };
+
+  const handleApplyQuickPaste = (text: string, target: 'new' | 'edit') => {
+    const coords = parseCoordinatesInput(text);
+    if (coords) {
+      if (target === 'new') {
+        setNewBranchLatitude(coords.lat.toString());
+        setNewBranchLongitude(coords.lng.toString());
+        setNewBranchQuickPaste('');
+      } else if (target === 'edit' && editingBranch) {
+        setEditingBranch({
+          ...editingBranch,
+          latitude: coords.lat,
+          longitude: coords.lng
+        });
+        setEditBranchQuickPaste('');
+      }
+      setGpsStatus({ text: `Coordinates applied: ${coords.lat}, ${coords.lng}` });
+    } else {
+      setGpsStatus({ 
+        text: 'Could not recognize coordinates. Paste format like "6.8925, 79.8558" or a Google Maps URL.', 
+        isError: true 
+      });
+    }
+  };
+
+  const handleSelectPreset = (preset: { lat: number; lng: number; label: string }, target: 'new' | 'edit') => {
+    if (target === 'new') {
+      setNewBranchLatitude(preset.lat.toString());
+      setNewBranchLongitude(preset.lng.toString());
+    } else if (target === 'edit' && editingBranch) {
+      setEditingBranch({
+        ...editingBranch,
+        latitude: preset.lat,
+        longitude: preset.lng
+      });
+    }
+    setGpsStatus({ text: `Preset applied: ${preset.label} (${preset.lat}, ${preset.lng})` });
+  };
 
   // Editing branch modal state
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
 
   // GPS Acquisition State for Branch Coordinates
   const [gpsLoading, setGpsLoading] = useState(false);
-  const [gpsStatus, setGpsStatus] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<{ text: string; isError?: boolean; isIframeError?: boolean } | null>(null);
 
-  // Helper to get device GPS coordinates
+  // Helper to get device GPS coordinates with fallback
   const handleAcquireGPS = (target: 'new' | 'edit') => {
     if (!navigator.geolocation) {
       setGpsStatus({ text: 'Geolocation is not supported by your browser.', isError: true });
@@ -74,40 +150,88 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
     setGpsLoading(true);
     setGpsStatus(null);
 
+    const onGpsSuccess = (pos: GeolocationPosition) => {
+      const lat = Number(pos.coords.latitude.toFixed(6));
+      const lng = Number(pos.coords.longitude.toFixed(6));
+      const accuracy = Math.round(pos.coords.accuracy);
+
+      if (target === 'new') {
+        setNewBranchLatitude(lat.toString());
+        setNewBranchLongitude(lng.toString());
+      } else if (target === 'edit' && editingBranch) {
+        setEditingBranch(prev => prev ? {
+          ...prev,
+          latitude: lat,
+          longitude: lng
+        } : null);
+      }
+
+      setGpsStatus({ 
+        text: `Acquired GPS: ${lat}, ${lng} (Accuracy: ±${accuracy}m)` 
+      });
+      setGpsLoading(false);
+    };
+
+    const onGpsError = (err: GeolocationPositionError) => {
+      const isInsideIframe = typeof window !== 'undefined' && window.self !== window.top;
+      const isPolicyBlocked = (err.message && err.message.toLowerCase().includes('permissions policy')) || 
+        (err.code === 1 && isInsideIframe);
+
+      if (isPolicyBlocked) {
+        setGpsStatus({
+          text: 'Embedded preview iframe restricted direct hardware GPS. Open in a standalone new tab, or paste coordinates / Google Maps link below.',
+          isError: true,
+          isIframeError: true
+        });
+        setGpsLoading(false);
+        return;
+      }
+
+      // If high accuracy failed (common in desktop or weak GPS), try standard accuracy fallback
+      if (err.code === 3) {
+        navigator.geolocation.getCurrentPosition(
+          onGpsSuccess,
+          (fallbackErr) => {
+            let msg = 'Unable to retrieve location.';
+            if (fallbackErr.code === 1) {
+              msg = 'Location permission denied. Please allow location access in your browser settings or paste coordinates below.';
+            } else if (fallbackErr.code === 2) {
+              msg = 'Position unavailable. Please ensure GPS/WiFi location is turned on or paste coordinates.';
+            } else if (fallbackErr.code === 3) {
+              msg = 'Location request timed out. Please check signal, use a preset, or paste coordinates.';
+            } else if (fallbackErr.message) {
+              msg = fallbackErr.message;
+            }
+            setGpsStatus({ text: `GPS: ${msg}`, isError: true });
+            setGpsLoading(false);
+          },
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 }
+        );
+        return;
+      }
+
+      let msg = 'Unable to retrieve location.';
+      if (err.code === 1) {
+        msg = 'Location permission denied. Please click the site settings / lock icon in your browser to allow location access, or paste coordinates below.';
+      } else if (err.code === 2) {
+        msg = 'Position unavailable. Please check your network/GPS connection or paste coordinates.';
+      } else if (err.code === 3) {
+        msg = 'Location request timed out. Please retry or select a preset.';
+      } else if (err.message) {
+        msg = err.message;
+      }
+
+      setGpsStatus({ text: `GPS: ${msg}`, isError: true });
+      setGpsLoading(false);
+    };
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        const accuracy = Math.round(pos.coords.accuracy);
-
-        if (target === 'new') {
-          setNewBranchLatitude(lat.toString());
-          setNewBranchLongitude(lng.toString());
-        } else if (target === 'edit' && editingBranch) {
-          setEditingBranch(prev => prev ? {
-            ...prev,
-            latitude: lat,
-            longitude: lng
-          } : null);
-        }
-
-        setGpsStatus({ 
-          text: `Acquired GPS: ${lat}, ${lng} (Accuracy: ±${accuracy}m)` 
-        });
-        setGpsLoading(false);
-      },
-      (err) => {
-        console.error('GPS error:', err);
-        setGpsStatus({ 
-          text: `GPS Error: ${err.message || 'Unable to retrieve location.'}`, 
-          isError: true 
-        });
-        setGpsLoading(false);
-      },
+      onGpsSuccess,
+      onGpsError,
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
+        timeout: 10000,
+        maximumAge: 10000
       }
     );
   };
@@ -894,48 +1018,105 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
               </div>
 
               {/* Geolocation Attendance Coordinates */}
-              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-200 space-y-2.5">
+              <div className="p-3.5 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-800 flex items-center gap-1.5 text-[11px]">
-                    <MapPin className="w-3.5 h-3.5 text-orange-500" />
-                    Attendance Geolocation Coordinates
+                  <span className="font-bold text-zinc-800 flex items-center gap-1.5 text-xs">
+                    <MapPin className="w-4 h-4 text-orange-500" />
+                    Attendance Geolocation Geofence
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => handleAcquireGPS('new')}
-                    disabled={gpsLoading}
-                    className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
-                  >
-                    {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
-                    <span>{gpsLoading ? 'Locating...' : 'Use Current Location'}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAcquireGPS('new')}
+                      disabled={gpsLoading}
+                      className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                    >
+                      {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                      <span>{gpsLoading ? 'Locating...' : 'Use Current Location'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                {/* Smart Paste or Google Maps Link Input */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-zinc-500 font-semibold flex items-center gap-1">
+                      <Compass className="w-3 h-3 text-indigo-500" />
+                      Paste Coordinates or Google Maps Link:
+                    </span>
+                    <a 
+                      href="https://www.google.com/maps" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 hover:underline flex items-center gap-0.5 font-bold"
+                    >
+                      <span>Open Google Maps</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="e.g. 6.892582, 79.855843 or https://maps.google.com/..."
+                      value={newBranchQuickPaste}
+                      onChange={(e) => setNewBranchQuickPaste(e.target.value)}
+                      className="flex-1 bg-white border border-zinc-200 px-2.5 py-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleApplyQuickPaste(newBranchQuickPaste, 'new')}
+                      className="bg-zinc-800 hover:bg-zinc-900 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sri Lanka Showroom Location Presets */}
+                <div className="space-y-1">
+                  <span className="text-zinc-400 block text-[9.5px] font-bold uppercase tracking-wider">
+                    Quick Showroom Presets:
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {SRI_LANKA_PRESETS.map((p, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSelectPreset(p, 'new')}
+                        className="text-[9.5px] bg-white hover:bg-orange-50 hover:text-orange-700 hover:border-orange-300 border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-md transition-all cursor-pointer font-medium"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Coordinate Fields */}
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-zinc-200/70">
                   <div>
-                    <label className="text-zinc-400 block text-[10px] mb-0.5">Latitude:</label>
+                    <label className="text-zinc-500 block text-[10px] mb-0.5 font-bold">Latitude:</label>
                     <input
                       type="number"
                       step="any"
                       placeholder="e.g. 6.8925"
                       value={newBranchLatitude}
                       onChange={(e) => setNewBranchLatitude(e.target.value)}
-                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono"
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono font-bold"
                     />
                   </div>
                   <div>
-                    <label className="text-zinc-400 block text-[10px] mb-0.5">Longitude:</label>
+                    <label className="text-zinc-500 block text-[10px] mb-0.5 font-bold">Longitude:</label>
                     <input
                       type="number"
                       step="any"
                       placeholder="e.g. 79.8558"
                       value={newBranchLongitude}
                       onChange={(e) => setNewBranchLongitude(e.target.value)}
-                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono"
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono font-bold"
                     />
                   </div>
                   <div>
-                    <label className="text-zinc-400 block text-[10px] mb-0.5">Radius (Meters):</label>
+                    <label className="text-zinc-500 block text-[10px] mb-0.5 font-bold">Radius (Meters):</label>
                     <input
                       type="number"
                       min="1"
@@ -943,15 +1124,31 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                       placeholder="5"
                       value={newBranchRadius}
                       onChange={(e) => setNewBranchRadius(parseInt(e.target.value) || 5)}
-                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono font-bold"
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono font-bold text-orange-600"
                     />
                   </div>
                 </div>
 
                 {gpsStatus && (
-                  <p className={`text-[10px] ${gpsStatus.isError ? 'text-rose-600' : 'text-emerald-600 font-semibold'}`}>
-                    {gpsStatus.text}
-                  </p>
+                  <div className={`p-2.5 rounded-xl border text-[10.5px] space-y-1.5 ${
+                    gpsStatus.isError 
+                      ? 'bg-rose-50 border-rose-200 text-rose-700' 
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-800 font-medium'
+                  }`}>
+                    <p className="leading-tight">{gpsStatus.text}</p>
+                    {gpsStatus.isIframeError && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() => window.open(window.location.href, '_blank')}
+                          className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-xs"
+                        >
+                          <span>Open in Standalone Tab for Hardware GPS</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1218,24 +1415,81 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
               </div>
 
               {/* Geolocation Attendance Geofence Configuration */}
-              <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5">
+              <div className="p-3.5 bg-slate-950/90 rounded-2xl border border-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
-                    <MapPin className="w-3.5 h-3.5 text-orange-400" />
+                    <MapPin className="w-4 h-4 text-orange-400" />
                     Geolocation Attendance Geofence
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => handleAcquireGPS('edit')}
-                    disabled={gpsLoading}
-                    className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-xl text-[10px] font-bold transition-all cursor-pointer shadow-md disabled:opacity-50"
-                  >
-                    {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
-                    <span>{gpsLoading ? 'Detecting GPS...' : 'Use Current Location'}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAcquireGPS('edit')}
+                      disabled={gpsLoading}
+                      className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-md disabled:opacity-50"
+                    >
+                      {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                      <span>{gpsLoading ? 'Detecting GPS...' : 'Use Current Location'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                {/* Smart Paste or Google Maps Link Input */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-slate-400 font-semibold flex items-center gap-1">
+                      <Compass className="w-3 h-3 text-cyan-400" />
+                      Paste Coordinates or Google Maps Link:
+                    </span>
+                    <a 
+                      href="https://www.google.com/maps" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-cyan-400 hover:underline flex items-center gap-0.5 font-bold"
+                    >
+                      <span>Open Google Maps</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="e.g. 6.892582, 79.855843 or Google Maps URL"
+                      value={editBranchQuickPaste}
+                      onChange={(e) => setEditBranchQuickPaste(e.target.value)}
+                      className="flex-1 bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg text-white outline-none text-[11px] font-mono focus:border-cyan-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleApplyQuickPaste(editBranchQuickPaste, 'edit')}
+                      className="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer border border-slate-700"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sri Lanka Showroom Location Presets */}
+                <div className="space-y-1">
+                  <span className="text-slate-400 block text-[9.5px] font-bold uppercase tracking-wider">
+                    Quick Showroom Presets:
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {SRI_LANKA_PRESETS.map((p, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSelectPreset(p, 'edit')}
+                        className="text-[9.5px] bg-slate-900 hover:bg-orange-950/60 hover:text-orange-300 hover:border-orange-500/50 border border-slate-800 text-slate-300 px-2 py-0.5 rounded-md transition-all cursor-pointer font-medium"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Coordinate Fields */}
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800/80">
                   <div>
                     <label className="text-slate-400 block text-[10px] mb-0.5 font-bold">Latitude:</label>
                     <input
@@ -1247,7 +1501,7 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                         ...editingBranch, 
                         latitude: e.target.value ? parseFloat(e.target.value) : null 
                       })}
-                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono"
+                      className="w-full bg-slate-900 border border-slate-800 p-1.5 rounded-lg text-white outline-none focus:border-orange-500 text-xs font-mono font-bold"
                     />
                   </div>
                   <div>
@@ -1261,7 +1515,7 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                         ...editingBranch, 
                         longitude: e.target.value ? parseFloat(e.target.value) : null 
                       })}
-                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono"
+                      className="w-full bg-slate-900 border border-slate-800 p-1.5 rounded-lg text-white outline-none focus:border-orange-500 text-xs font-mono font-bold"
                     />
                   </div>
                   <div>
@@ -1276,15 +1530,31 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                         ...editingBranch, 
                         attendance_radius_meters: parseInt(e.target.value) || 5 
                       })}
-                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono font-bold"
+                      className="w-full bg-slate-900 border border-slate-800 p-1.5 rounded-lg text-white outline-none focus:border-orange-500 text-xs font-mono font-bold text-orange-400"
                     />
                   </div>
                 </div>
 
                 {gpsStatus && (
-                  <p className={`text-[10px] ${gpsStatus.isError ? 'text-rose-400' : 'text-emerald-400 font-semibold'}`}>
-                    {gpsStatus.text}
-                  </p>
+                  <div className={`p-2.5 rounded-xl border text-[10.5px] space-y-1.5 ${
+                    gpsStatus.isError 
+                      ? 'bg-rose-950/40 border-rose-800 text-rose-300' 
+                      : 'bg-emerald-950/40 border-emerald-800 text-emerald-300 font-medium'
+                  }`}>
+                    <p className="leading-tight">{gpsStatus.text}</p>
+                    {gpsStatus.isIframeError && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() => window.open(window.location.href, '_blank')}
+                          className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-md"
+                        >
+                          <span>Open in Standalone Tab for Hardware GPS</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
