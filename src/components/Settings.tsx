@@ -58,6 +58,9 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
   const [newBranchLongitude, setNewBranchLongitude] = useState<string>('');
   const [newBranchRadius, setNewBranchRadius] = useState<number>(5);
 
+  // Editing branch modal state
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+
   // GPS Acquisition State for Branch Coordinates
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsStatus, setGpsStatus] = useState<{ text: string; isError?: boolean } | null>(null);
