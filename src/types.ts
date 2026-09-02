@@ -10,6 +10,9 @@ export interface Branch {
   code: string;
   phone: string;
   email: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  attendance_radius_meters?: number | null;
   created_at: string;
 }
 
@@ -21,12 +24,31 @@ export interface User {
   username: string;
   name: string;
   role: UserRole;
-  branch_id?: string; // Null for Super Admin
+  branch_id?: string | null; // Null for Super Admin
   avatar?: string;
   active: boolean;
   permissions: string[];
+  attendance_token?: string | null;
   created_at: string;
   password?: string;
+}
+
+export type AttendanceType = 'in' | 'out';
+export type AttendanceStatus = 'approved' | 'denied';
+
+export interface AttendanceLog {
+  id: string;
+  user_id: string;
+  user_name: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  type: AttendanceType;
+  status: AttendanceStatus;
+  latitude: number;
+  longitude: number;
+  distance_meters: number;
+  radius_meters: number;
+  created_at: string;
 }
 
 export interface Role {

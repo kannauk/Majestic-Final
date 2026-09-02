@@ -1,7 +1,9 @@
 {
   "name": "Remix Majestic Computers ERP",
   "description": "Enterprise-grade Multi-Branch ERP, POS, Inventory, Repair Center, and Financial Management System for Majestic Computers.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "geolocation"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

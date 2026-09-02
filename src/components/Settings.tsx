@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Settings2, MapPin, Percent, Phone, HelpCircle, 
   Database, ShieldAlert, Cpu, Landmark, CheckSquare, Clock,
-  Users, UserPlus, Pencil, X, CheckCircle, Tag, Layers, Globe, Mail, FileText, Plus
+  Users, UserPlus, Pencil, X, CheckCircle, Tag, Layers, Globe, Mail, FileText, Plus,
+  Navigation, Crosshair, Radio, RotateCw
 } from 'lucide-react';
 import { User, Branch, CompanySetting, ProductCategory, Brand } from '../types';
 import { getSetting, updateSetting } from '../services/settings';
@@ -53,9 +54,60 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
   const [newBranchCode, setNewBranchCode] = useState('');
   const [newBranchAddress, setNewBranchAddress] = useState('');
   const [newBranchPhone, setNewBranchPhone] = useState('');
+  const [newBranchLatitude, setNewBranchLatitude] = useState<string>('');
+  const [newBranchLongitude, setNewBranchLongitude] = useState<string>('');
+  const [newBranchRadius, setNewBranchRadius] = useState<number>(5);
 
-  // Editing branch modal state
-  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  // GPS Acquisition State for Branch Coordinates
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState<{ text: string; isError?: boolean } | null>(null);
+
+  // Helper to get device GPS coordinates
+  const handleAcquireGPS = (target: 'new' | 'edit') => {
+    if (!navigator.geolocation) {
+      setGpsStatus({ text: 'Geolocation is not supported by your browser.', isError: true });
+      return;
+    }
+    setGpsLoading(true);
+    setGpsStatus(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const accuracy = Math.round(pos.coords.accuracy);
+
+        if (target === 'new') {
+          setNewBranchLatitude(lat.toString());
+          setNewBranchLongitude(lng.toString());
+        } else if (target === 'edit' && editingBranch) {
+          setEditingBranch(prev => prev ? {
+            ...prev,
+            latitude: lat,
+            longitude: lng
+          } : null);
+        }
+
+        setGpsStatus({ 
+          text: `Acquired GPS: ${lat}, ${lng} (Accuracy: ±${accuracy}m)` 
+        });
+        setGpsLoading(false);
+      },
+      (err) => {
+        console.error('GPS error:', err);
+        setGpsStatus({ 
+          text: `GPS Error: ${err.message || 'Unable to retrieve location.'}`, 
+          isError: true 
+        });
+        setGpsLoading(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      }
+    );
+  };
 
   // User configuration form fields
   const [newUserName, setNewUserName] = useState('');
@@ -141,14 +193,21 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
         code: newBranchCode.toUpperCase().trim(),
         location: newBranchAddress,
         phone: newBranchPhone || '+94 11 000 0000',
-        email: `contact@${newBranchCode.toLowerCase().trim()}.majestic.com`
+        email: `contact@${newBranchCode.toLowerCase().trim()}.majestic.com`,
+        latitude: newBranchLatitude ? parseFloat(newBranchLatitude) : null,
+        longitude: newBranchLongitude ? parseFloat(newBranchLongitude) : null,
+        attendance_radius_meters: newBranchRadius || 5
       });
       setBranches([...branches, newBr]);
       setNewBranchName('');
       setNewBranchCode('');
       setNewBranchAddress('');
       setNewBranchPhone('');
-      setStatusMsg(`Branch "${newBr.name}" registered successfully.`);
+      setNewBranchLatitude('');
+      setNewBranchLongitude('');
+      setNewBranchRadius(5);
+      setGpsStatus(null);
+      setStatusMsg(`Branch "${newBr.name}" registered successfully with GPS geofence.`);
       setTimeout(() => setStatusMsg(null), 3500);
     } catch (error) {
       console.error(error);
@@ -726,7 +785,7 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
       ) : activeTab === 'branches' ? (
         /* Create unlimited branches form */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6" id="branches-registry-view">
-          {/* List existing Branches */}
+            {/* List existing Branches */}
           <div className="bg-white border rounded-2xl p-5 shadow-sm space-y-4">
             <h4 className="text-sm font-semibold text-zinc-900 border-b border-zinc-100 pb-2.5 flex items-center gap-1">
               <MapPin className="w-4 h-4 text-emerald-550" />
@@ -735,13 +794,26 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
 
             <div className="space-y-2 max-h-[350px] overflow-y-auto">
               {branches.map(b => (
-                <div key={b.id} className="p-3 bg-zinc-50 rounded-xl border border-zinc-150 flex justify-between items-center text-xs leading-normal">
-                  <div>
+                <div key={b.id} className="p-3 bg-zinc-50 rounded-xl border border-zinc-150 flex justify-between items-start text-xs leading-normal">
+                  <div className="space-y-1">
                     <h5 className="font-bold text-zinc-900">{b.name} ({b.code})</h5>
-                    <p className="text-zinc-500 mt-1">{b.location}</p>
-                    <p className="text-indigo-700 font-semibold text-[10.5px] mt-0.5">Hub link: {b.phone}</p>
+                    <p className="text-zinc-500">{b.location}</p>
+                    <p className="text-indigo-700 font-semibold text-[10.5px]">Hub link: {b.phone}</p>
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      {b.latitude && b.longitude ? (
+                        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">
+                          <Radio className="w-2.5 h-2.5 text-emerald-500 animate-pulse" />
+                          GPS: {b.latitude.toFixed(4)}, {b.longitude.toFixed(4)} (≤{b.attendance_radius_meters || 5}m)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <MapPin className="w-2.5 h-2.5 text-amber-500" />
+                          GPS Geofence Not Configured
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[9px] font-black tracking-widest bg-zinc-200 text-zinc-700 px-2 py-0.5 rounded uppercase font-mono shadow-xs shrink-0 self-center">
                       {b.code}
                     </span>
@@ -818,9 +890,71 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                 />
               </div>
 
+              {/* Geolocation Attendance Coordinates */}
+              <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-zinc-800 flex items-center gap-1.5 text-[11px]">
+                    <MapPin className="w-3.5 h-3.5 text-orange-500" />
+                    Attendance Geolocation Coordinates
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAcquireGPS('new')}
+                    disabled={gpsLoading}
+                    className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                    <span>{gpsLoading ? 'Locating...' : 'Use Current Location'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-zinc-400 block text-[10px] mb-0.5">Latitude:</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 6.8925"
+                      value={newBranchLatitude}
+                      onChange={(e) => setNewBranchLatitude(e.target.value)}
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-zinc-400 block text-[10px] mb-0.5">Longitude:</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 79.8558"
+                      value={newBranchLongitude}
+                      onChange={(e) => setNewBranchLongitude(e.target.value)}
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-zinc-400 block text-[10px] mb-0.5">Radius (Meters):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="500"
+                      placeholder="5"
+                      value={newBranchRadius}
+                      onChange={(e) => setNewBranchRadius(parseInt(e.target.value) || 5)}
+                      className="w-full bg-white border border-zinc-200 p-1.5 rounded-lg text-zinc-800 outline-none text-[11px] font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {gpsStatus && (
+                  <p className={`text-[10px] ${gpsStatus.isError ? 'text-rose-600' : 'text-emerald-600 font-semibold'}`}>
+                    {gpsStatus.text}
+                  </p>
+                )}
+              </div>
+
               <button
                 type="submit"
-                className="w-full bg-zinc-900 text-white font-bold py-2.5 rounded-xl uppercase tracking-wider text-[11px] hover:bg-zinc-800 transition-all shadow-sm"
+                className="w-full bg-zinc-900 text-white font-bold py-2.5 rounded-xl uppercase tracking-wider text-[11px] hover:bg-zinc-800 transition-all shadow-sm cursor-pointer"
               >
                 Launch branch Channels
               </button>
@@ -1078,6 +1212,77 @@ export default function Settings({ user, activeBranch, theme = 'slate', setTheme
                   onChange={(e) => setEditingBranch({ ...editingBranch, email: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 p-2.5 rounded-xl text-white outline-none focus:border-indigo-500"
                 />
+              </div>
+
+              {/* Geolocation Attendance Geofence Configuration */}
+              <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
+                    <MapPin className="w-3.5 h-3.5 text-orange-400" />
+                    Geolocation Attendance Geofence
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAcquireGPS('edit')}
+                    disabled={gpsLoading}
+                    className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-xl text-[10px] font-bold transition-all cursor-pointer shadow-md disabled:opacity-50"
+                  >
+                    {gpsLoading ? <RotateCw className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+                    <span>{gpsLoading ? 'Detecting GPS...' : 'Use Current Location'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-slate-400 block text-[10px] mb-0.5 font-bold">Latitude:</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 6.8925"
+                      value={editingBranch.latitude ?? ''}
+                      onChange={(e) => setEditingBranch({ 
+                        ...editingBranch, 
+                        latitude: e.target.value ? parseFloat(e.target.value) : null 
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block text-[10px] mb-0.5 font-bold">Longitude:</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 79.8558"
+                      value={editingBranch.longitude ?? ''}
+                      onChange={(e) => setEditingBranch({ 
+                        ...editingBranch, 
+                        longitude: e.target.value ? parseFloat(e.target.value) : null 
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block text-[10px] mb-0.5 font-bold">Radius (Meters):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="500"
+                      placeholder="5"
+                      value={editingBranch.attendance_radius_meters ?? 5}
+                      onChange={(e) => setEditingBranch({ 
+                        ...editingBranch, 
+                        attendance_radius_meters: parseInt(e.target.value) || 5 
+                      })}
+                      className="w-full bg-slate-900 border border-slate-800 p-2 rounded-xl text-white outline-none focus:border-orange-500 text-xs font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {gpsStatus && (
+                  <p className={`text-[10px] ${gpsStatus.isError ? 'text-rose-400' : 'text-emerald-400 font-semibold'}`}>
+                    {gpsStatus.text}
+                  </p>
+                )}
               </div>
 
               <button

@@ -43,6 +43,7 @@ export default function Sidebar({
     { id: 'repairs', label: 'Repair Workshop', icon: Wrench, roles: ['super_admin', 'branch_admin', 'technician'] },
     { id: 'inventory', label: 'Stock & Inventory', icon: Package, roles: ['super_admin', 'branch_admin', 'inventory_manager'] },
     { id: 'purchasing', label: 'Supplier Purchases', icon: Truck, roles: ['super_admin', 'branch_admin', 'inventory_manager'] },
+    { id: 'geo-attendance', label: 'Geo Attendance', icon: MapPin, roles: ['super_admin', 'branch_admin'] },
     { id: 'financials', label: 'Financial Ledgers', icon: Landmark, roles: ['super_admin', 'branch_admin'] },
     { id: 'reports', label: 'Business Reports', icon: FileSpreadsheet, roles: ['super_admin', 'branch_admin'] },
     { id: 'sql-setup', label: 'Supabase SQL Lab', icon: Database, roles: ['super_admin'] },

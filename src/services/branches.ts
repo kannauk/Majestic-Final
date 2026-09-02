@@ -4,8 +4,30 @@ import { Branch } from '../types';
 export const getBranches = async (): Promise<Branch[]> => {
   if (!supabase) {
     return [
-      { id: 'b-banbalapitiya', name: 'Banbalapitiya Branch', location: 'No. 320, Galle Road, Banbalapitiya', code: 'BAN-01', phone: '+94 11 258 1234', email: 'banbalapitiya@majestic.com', created_at: '2026-01-10T08:00:00Z' },
-      { id: 'b-dematagoda', name: 'Dematagoda Branch', location: 'No. 54, Baseline Road, Dematagoda', code: 'DEM-02', phone: '+94 11 268 5678', email: 'dematagoda@majestic.com', created_at: '2026-01-15T08:00:00Z' }
+      { 
+        id: 'b-banbalapitiya', 
+        name: 'Banbalapitiya Branch', 
+        location: 'No. 320, Galle Road, Banbalapitiya', 
+        code: 'BAN-01', 
+        phone: '+94 11 258 1234', 
+        email: 'banbalapitiya@majestic.com', 
+        latitude: 6.8925,
+        longitude: 79.8558,
+        attendance_radius_meters: 10,
+        created_at: '2026-01-10T08:00:00Z' 
+      },
+      { 
+        id: 'b-dematagoda', 
+        name: 'Dematagoda Branch', 
+        location: 'No. 54, Baseline Road, Dematagoda', 
+        code: 'DEM-02', 
+        phone: '+94 11 268 5678', 
+        email: 'dematagoda@majestic.com', 
+        latitude: 6.9319,
+        longitude: 79.8785,
+        attendance_radius_meters: 10,
+        created_at: '2026-01-15T08:00:00Z' 
+      }
     ];
   }
   const { data, error } = await supabase
@@ -14,8 +36,30 @@ export const getBranches = async (): Promise<Branch[]> => {
   
   if (error) {
     return [
-      { id: 'b-banbalapitiya', name: 'Banbalapitiya Branch', location: 'No. 320, Galle Road, Banbalapitiya', code: 'BAN-01', phone: '+94 11 258 1234', email: 'banbalapitiya@majestic.com', created_at: '2026-01-10T08:00:00Z' },
-      { id: 'b-dematagoda', name: 'Dematagoda Branch', location: 'No. 54, Baseline Road, Dematagoda', code: 'DEM-02', phone: '+94 11 268 5678', email: 'dematagoda@majestic.com', created_at: '2026-01-15T08:00:00Z' }
+      { 
+        id: 'b-banbalapitiya', 
+        name: 'Banbalapitiya Branch', 
+        location: 'No. 320, Galle Road, Banbalapitiya', 
+        code: 'BAN-01', 
+        phone: '+94 11 258 1234', 
+        email: 'banbalapitiya@majestic.com', 
+        latitude: 6.8925,
+        longitude: 79.8558,
+        attendance_radius_meters: 10,
+        created_at: '2026-01-10T08:00:00Z' 
+      },
+      { 
+        id: 'b-dematagoda', 
+        name: 'Dematagoda Branch', 
+        location: 'No. 54, Baseline Road, Dematagoda', 
+        code: 'DEM-02', 
+        phone: '+94 11 268 5678', 
+        email: 'dematagoda@majestic.com', 
+        latitude: 6.9319,
+        longitude: 79.8785,
+        attendance_radius_meters: 10,
+        created_at: '2026-01-15T08:00:00Z' 
+      }
     ];
   }
   return data || [];

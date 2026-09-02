@@ -19,6 +19,7 @@ import Financials from './components/Financials';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
 import SQLSetup from './components/SQLSetup';
+import GeoAttendance from './components/GeoAttendance';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -96,8 +97,11 @@ export default function App() {
         return <Financials user={currentUser} activeBranch={activeBranch} />;
       case 'reports':
         return <Reports user={currentUser} activeBranch={activeBranch} />;
+      case 'geo-attendance':
+        return <GeoAttendance user={currentUser} activeBranch={activeBranch} branches={branches} />;
       case 'settings':
         return <Settings user={currentUser} activeBranch={activeBranch} theme={theme} setTheme={setTheme} />;
+      case 'sql-setup':
       case 'supabase-sql':
         return <SQLSetup />;
       default:
