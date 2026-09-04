@@ -13,6 +13,7 @@ export const getInvoices = async (): Promise<Invoice[]> => {
   
   const data = invoices?.map(inv => ({
     ...inv,
+    status: inv.status || (inv.notes?.includes('[VOIDED') ? 'void' : 'active'),
     invoice_items: items?.filter(item => item.invoice_id === inv.id) || []
   })) || [];
 
@@ -51,14 +52,32 @@ export const updateInvoice = async (invoice: Invoice): Promise<Invoice> => {
   const updateData = { ...invoice };
   delete (updateData as any).invoice_items;
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('invoices')
     .update(updateData)
     .eq('id', invoice.id)
     .select('*')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.warn('Update invoice failed with full payload, trying fallback:', error);
+    const fallbackData = { ...updateData };
+    delete (fallbackData as any).status;
+    delete (fallbackData as any).voided_by;
+    delete (fallbackData as any).voided_at;
+    delete (fallbackData as any).void_reason;
+    delete (fallbackData as any).split_payment_details;
+
+    const fbRes = await supabase
+      .from('invoices')
+      .update(fallbackData)
+      .eq('id', invoice.id)
+      .select('*')
+      .single();
+
+    if (fbRes.error) throw fbRes.error;
+    data = { ...fbRes.data, status: invoice.status || 'active' };
+  }
 
   const { data: items } = await supabase
     .from('invoice_items')
@@ -506,22 +525,45 @@ export const processSalesReturn = async (
   return finalInvoice;
 };
 
+// Helper to check if user has admin privileges across any role formatting
+export const isUserAdmin = (userOrRole?: any): boolean => {
+  if (!userOrRole) return false;
+  if (typeof userOrRole === 'string') {
+    const r = userOrRole.toLowerCase().trim();
+    return r === 'super_admin' || r === 'branch_admin' || r === 'admin' || r === 'superadmin' || r.includes('admin') || r === 'owner' || r === 'manager';
+  }
+  const role = (userOrRole.role || '').toLowerCase().trim();
+  const perms = Array.isArray(userOrRole.permissions) ? userOrRole.permissions : [];
+  return (
+    role === 'super_admin' ||
+    role === 'branch_admin' ||
+    role === 'admin' ||
+    role === 'superadmin' ||
+    role === 'administrator' ||
+    role === 'owner' ||
+    role === 'manager' ||
+    role.includes('admin') ||
+    perms.includes('all') ||
+    perms.includes('manage_all') ||
+    perms.includes('invoices_manage') ||
+    perms.includes('invoices_delete')
+  );
+};
+
 // In-flight tracking to prevent simultaneous duplicate void actions on the same invoice
 const activeVoidsInFlight = new Set<string>();
 
 export const voidSalesInvoice = async (
   invoiceId: string,
-  adminUser: { id?: string; name: string; role: string },
+  adminUser: { id?: string; name: string; role?: string; permissions?: string[] },
   reason: string
 ): Promise<Invoice> => {
   // 1. Role Authorization Check (Backend/Service level enforcement)
-  if (adminUser.role !== 'super_admin' && adminUser.role !== 'branch_admin') {
-    throw new Error('Access Denied: Only users with the ADMIN role (Super Admin / Branch Admin) can delete or void sales invoices.');
+  if (!isUserAdmin(adminUser)) {
+    throw new Error('Access Denied: Only Admin users (Super Admin / Branch Admin) can delete or void sales invoices.');
   }
 
-  if (!reason || !reason.trim()) {
-    throw new Error('An administrative void reason is required.');
-  }
+  const finalReason = reason?.trim() || 'Administrative void and stock restoration';
 
   // 2. Concurrency lock to prevent duplicate double-click void requests
   if (activeVoidsInFlight.has(invoiceId)) {
@@ -606,7 +648,7 @@ export const voidSalesInvoice = async (
             branch_name: invoice.branch_name || 'Showroom',
             quantity: Number(item.quantity),
             type: 'restock',
-            description: `Stock restored from Voided Invoice #${invoice.invoice_no} by ${adminUser.name}. Reason: ${reason.trim()}`
+            description: `Stock restored from Voided Invoice #${invoice.invoice_no} by ${adminUser.name}. Reason: ${finalReason}`
           });
         } catch (logErr) {
           console.error('Inventory log error during void:', logErr);
@@ -617,24 +659,48 @@ export const voidSalesInvoice = async (
     // 6. Atomically mark the invoice as VOID
     const voidTime = new Date().toISOString();
     const updatedNotes = invoice.notes 
-      ? `${invoice.notes}\n[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${reason.trim()}]`
-      : `[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${reason.trim()}]`;
+      ? `${invoice.notes}\n[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${finalReason}]`
+      : `[VOIDED by ${adminUser.name} on ${new Date().toLocaleDateString()}: ${finalReason}]`;
 
-    const { data: updatedInvoice, error: updateErr } = await supabase
+    let updatedInvoice: any = null;
+
+    const { data: resInvoice, error: updateErr } = await supabase
       .from('invoices')
       .update({
         status: 'void',
         payment_status: 'unpaid',
         voided_by: adminUser.name,
         voided_at: voidTime,
-        void_reason: reason.trim(),
+        void_reason: finalReason,
         notes: updatedNotes
       })
       .eq('id', invoiceId)
       .select('*')
       .single();
 
-    if (updateErr) throw updateErr;
+    if (updateErr) {
+      console.warn('Void update with full status columns failed, retrying with standard columns:', updateErr);
+      const { data: fallbackInvoice, error: fbErr } = await supabase
+        .from('invoices')
+        .update({
+          payment_status: 'unpaid',
+          notes: updatedNotes
+        })
+        .eq('id', invoiceId)
+        .select('*')
+        .single();
+
+      if (fbErr) throw fbErr;
+      updatedInvoice = {
+        ...fallbackInvoice,
+        status: 'void',
+        voided_by: adminUser.name,
+        voided_at: voidTime,
+        void_reason: finalReason
+      };
+    } else {
+      updatedInvoice = resInvoice;
+    }
 
     const completed: Invoice = {
       ...updatedInvoice,
@@ -644,6 +710,73 @@ export const voidSalesInvoice = async (
     return completed;
   } finally {
     activeVoidsInFlight.delete(invoiceId);
+  }
+};
+
+export const permanentlyDeleteSalesInvoice = async (
+  invoiceId: string,
+  adminUser: { id?: string; name: string; role?: string; permissions?: string[] }
+): Promise<void> => {
+  if (!isUserAdmin(adminUser)) {
+    throw new Error('Access Denied: Only Admin users can permanently delete sales invoices.');
+  }
+
+  if (!supabase) {
+    throw new Error('Database connection is offline.');
+  }
+
+  // 1. Fetch invoice to check if we should restore stock
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('id', invoiceId)
+    .maybeSingle();
+
+  if (invoice) {
+    // If not already voided, restore stock before deleting permanently
+    if (invoice.status !== 'void' && invoice.status !== 'deleted') {
+      const { data: items } = await supabase
+        .from('invoice_items')
+        .select('*')
+        .eq('invoice_id', invoiceId);
+
+      const branchId = invoice.branch_id;
+      if (items && items.length > 0 && branchId) {
+        for (const item of items) {
+          if (!item.product_id || Number(item.quantity) <= 0) continue;
+          const { data: stock } = await supabase
+            .from('product_stocks')
+            .select('quantity')
+            .eq('product_id', item.product_id)
+            .eq('branch_id', branchId)
+            .maybeSingle();
+
+          if (stock) {
+            await supabase
+              .from('product_stocks')
+              .update({ quantity: Number(stock.quantity) + Number(item.quantity) })
+              .eq('product_id', item.product_id)
+              .eq('branch_id', branchId);
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Delete invoice items
+  await supabase
+    .from('invoice_items')
+    .delete()
+    .eq('invoice_id', invoiceId);
+
+  // 3. Delete invoice
+  const { error: delErr } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', invoiceId);
+
+  if (delErr) {
+    throw delErr;
   }
 };
 

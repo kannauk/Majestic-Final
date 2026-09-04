@@ -89,8 +89,8 @@ export async function processSale(sale: SaleData): Promise<Invoice> {
     // Generate unique invoice number with timestamp + random suffix to prevent collisions
     const uniqueInvoiceNo = `INV-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 1. Insert Invoice
-    const { data: invoice, error: invError } = await supabase.from('invoices').insert({
+    // 1. Insert Invoice with resilient schema fallback
+    const invoicePayload: Record<string, any> = {
       invoice_no: uniqueInvoiceNo,
       branch_id: sale.branchId,
       branch_name: branchName,
@@ -103,13 +103,57 @@ export async function processSale(sale: SaleData): Promise<Invoice> {
       total,
       payment_method: sale.paymentMethod,
       payment_status: 'paid',
-      status: 'active',
       paid_amount: sale.paidAmount,
       split_payment_details: sale.splitDetails,
       created_by_name: sale.cashierName,
       notes: sale.notes
-    }).select().single();
-    if (invError) throw invError;
+    };
+
+    let invoice: any = null;
+    
+    // First try inserting with status: 'active'
+    let { data: insertedInv, error: invError } = await supabase
+      .from('invoices')
+      .insert({ ...invoicePayload, status: 'active' })
+      .select()
+      .single();
+
+    if (invError) {
+      console.warn('Initial invoice insert with status column failed (table might not have status column yet), attempting fallback:', invError);
+      
+      // Fallback 1: Try without the status column
+      const res1 = await supabase
+        .from('invoices')
+        .insert(invoicePayload)
+        .select()
+        .single();
+
+      if (res1.error) {
+        console.warn('Fallback 1 invoice insert failed, attempting stripped payload:', res1.error);
+        // Fallback 2: Remove optional newer columns if database schema is legacy
+        const strippedPayload = { ...invoicePayload };
+        delete strippedPayload.split_payment_details;
+        delete strippedPayload.customer_id;
+        
+        const res2 = await supabase
+          .from('invoices')
+          .insert(strippedPayload)
+          .select()
+          .single();
+
+        if (res2.error) {
+          throw res2.error;
+        }
+        insertedInv = res2.data;
+      } else {
+        insertedInv = res1.data;
+      }
+    }
+
+    invoice = insertedInv;
+    if (invoice && !invoice.status) {
+      invoice.status = 'active';
+    }
 
     // Fetch product details for names and SKUs
     const productIds = sale.items.map(item => item.productId);

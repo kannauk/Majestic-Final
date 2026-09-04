@@ -127,14 +127,27 @@ CREATE TABLE IF NOT EXISTS invoices (
   total DECIMAL(12, 2) DEFAULT 0,
   payment_method VARCHAR(50),
   payment_status VARCHAR(50),
+  status VARCHAR(50) DEFAULT 'active',
   paid_amount DECIMAL(12, 2) DEFAULT 0,
   split_payment_details JSONB,
   refund_status VARCHAR(50) DEFAULT 'none',
   refunded_amount DECIMAL(12, 2) DEFAULT 0,
+  voided_by VARCHAR(255),
+  voided_at TIMESTAMP WITH TIME ZONE,
+  void_reason TEXT,
   created_by_name VARCHAR(255),
   notes TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migrations for existing databases:
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS voided_by VARCHAR(255);
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS voided_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS void_reason TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS split_payment_details JSONB;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50) DEFAULT 'none';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS refunded_amount DECIMAL(12, 2) DEFAULT 0;
 
 -- Invoice Items
 CREATE TABLE IF NOT EXISTS invoice_items (

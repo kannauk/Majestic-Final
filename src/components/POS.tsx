@@ -19,7 +19,7 @@ import { getCustomers, createCustomer, updateCustomer } from '../services/custom
 import { getProducts } from '../services/products';
 import { getProductStocks } from '../services/productStocks';
 import { getSetting } from '../services/settings';
-import { getInvoices, updateInvoice, modifyInvoice, processSalesReturn, voidSalesInvoice } from '../services/invoices';
+import { getInvoices, updateInvoice, modifyInvoice, processSalesReturn, voidSalesInvoice, permanentlyDeleteSalesInvoice, isUserAdmin } from '../services/invoices';
 import { getQuotations, createQuotation, updateQuotation, updateQuotationStatus, deleteQuotation } from '../services/quotations';
 import { updateProductStock } from '../services/productStocks';
 import { processSale } from '../services/sales';
@@ -640,52 +640,62 @@ export default function POS({ user, activeBranch, branches, onBranchChange }: PO
   const [showDeleteInvoiceModal, setShowDeleteInvoiceModal] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
   const [deleteInvoiceReason, setDeleteInvoiceReason] = useState('');
+  const [deleteInvoiceMode, setDeleteInvoiceMode] = useState<'void' | 'permanent'>('void');
   const [isDeletingInvoice, setIsDeletingInvoice] = useState(false);
   const [deleteInvoiceError, setDeleteInvoiceError] = useState<string | null>(null);
 
   const handleStartDeleteInvoice = (inv: Invoice) => {
-    if (user.role !== 'super_admin' && user.role !== 'branch_admin') {
-      alert('Access Denied: Only Admin users (Super Admin / Branch Admin) can delete sales invoices.');
+    if (!isUserAdmin(user)) {
+      alert('Access Denied: Only Admin users (Super Admin / Branch Admin) can delete or void sales invoices.');
       return;
     }
-    if (inv.status === 'void' || inv.status === 'deleted') {
-      alert(`Invoice #${inv.invoice_no} has already been voided.`);
-      return;
-    }
+    const isAlreadyVoid = inv.status === 'void' || inv.status === 'deleted';
     setInvoiceToDelete(inv);
-    setDeleteInvoiceReason('');
+    setDeleteInvoiceMode(isAlreadyVoid ? 'permanent' : 'void');
+    setDeleteInvoiceReason(isAlreadyVoid ? 'Permanently removing voided invoice record' : 'Customer cancellation / Billing correction');
     setDeleteInvoiceError(null);
     setShowDeleteInvoiceModal(true);
   };
 
   const handleConfirmDeleteInvoice = async () => {
     if (!invoiceToDelete) return;
-    if (!deleteInvoiceReason.trim()) {
-      setDeleteInvoiceError('Please provide a mandatory reason for deleting/voiding this invoice.');
-      return;
-    }
-
     setIsDeletingInvoice(true);
     setDeleteInvoiceError(null);
 
     try {
-      const updatedInvoice = await voidSalesInvoice(
-        invoiceToDelete.id,
-        { id: user.id, name: user.name, role: user.role },
-        deleteInvoiceReason.trim()
-      );
+      if (deleteInvoiceMode === 'permanent') {
+        await permanentlyDeleteSalesInvoice(
+          invoiceToDelete.id,
+          { id: user.id, name: user.name, role: user.role, permissions: user.permissions }
+        );
 
-      // Update local invoice state
-      setInvoices(prev => prev.map(inv => inv.id === invoiceToDelete.id ? updatedInvoice : inv));
+        // Remove from local invoice state
+        setInvoices(prev => prev.filter(inv => inv.id !== invoiceToDelete.id));
+
+        // If this invoice is currently open in print/preview modal, close it
+        if (selectedInvoice && selectedInvoice.id === invoiceToDelete.id) {
+          setSelectedInvoice(null);
+          setShowPrintModal(null);
+        }
+      } else {
+        const updatedInvoice = await voidSalesInvoice(
+          invoiceToDelete.id,
+          { id: user.id, name: user.name, role: user.role, permissions: user.permissions },
+          deleteInvoiceReason.trim() || 'Administrative void'
+        );
+
+        // Update local invoice state
+        setInvoices(prev => prev.map(inv => inv.id === invoiceToDelete.id ? updatedInvoice : inv));
+
+        // If this invoice is open in print/preview modal, update it
+        if (selectedInvoice && selectedInvoice.id === invoiceToDelete.id) {
+          setSelectedInvoice(updatedInvoice);
+        }
+      }
 
       // Refresh product stocks and products
       getProductStocks().then(setProductStocks).catch(console.error);
       getProducts().then(setAllProducts).catch(console.error);
-
-      // If this invoice is open in print/preview modal, update it
-      if (selectedInvoice && selectedInvoice.id === invoiceToDelete.id) {
-        setSelectedInvoice(updatedInvoice);
-      }
 
       setShowDeleteInvoiceModal(false);
       setInvoiceToDelete(null);
@@ -2299,7 +2309,7 @@ Thank you for choosing Majestic Computers!`;
                         )}
 
                         {/* Admin Modify Invoice Trigger (Only if active) */}
-                        {(user.role === 'super_admin' || user.role === 'branch_admin') && !isVoid && (
+                        {isUserAdmin(user) && !isVoid && (
                           <button
                             onClick={() => handleStartAdminEdit(inv)}
                             className="p-1 text-zinc-400 hover:text-indigo-600 hover:bg-zinc-100 rounded transition-colors"
@@ -2310,7 +2320,7 @@ Thank you for choosing Majestic Computers!`;
                         )}
 
                         {/* Admin Sales Return Trigger (Only if active) */}
-                        {(user.role === 'super_admin' || user.role === 'branch_admin') && !isVoid && inv.refund_status !== 'fully_refunded' && (
+                        {isUserAdmin(user) && !isVoid && inv.refund_status !== 'fully_refunded' && (
                           <button
                             onClick={() => handleStartSalesReturn(inv)}
                             className="p-1 text-zinc-400 hover:text-orange-600 hover:bg-zinc-100 rounded transition-colors"
@@ -2321,12 +2331,11 @@ Thank you for choosing Majestic Computers!`;
                         )}
 
                         {/* Admin Delete / Void Invoice Trigger (ADMIN ONLY) */}
-                        {(user.role === 'super_admin' || user.role === 'branch_admin') && (
+                        {isUserAdmin(user) && (
                           <button
                             onClick={() => handleStartDeleteInvoice(inv)}
-                            disabled={isVoid}
-                            className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-400 disabled:hover:bg-transparent"
-                            title={isVoid ? 'Invoice has already been deleted/voided' : 'Delete Sales Invoice & Restore Stock (Admin Only)'}
+                            className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                            title={isVoid ? 'Permanently Delete / Purge Invoice Record (Admin)' : 'Delete / Void Sales Invoice & Restore Stock (Admin)'}
                           >
                             <Trash2 className="w-3.5 h-3.5 inline" />
                           </button>
@@ -3237,6 +3246,23 @@ Thank you for choosing Majestic Computers!`;
                 <Mail className="w-3.5 h-3.5" />
                 Email Client
               </button>
+
+              {/* Admin Quick Delete Trigger inside preview */}
+              {isUserAdmin(user) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedInvoice) {
+                      handleStartDeleteInvoice(selectedInvoice);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Delete or Void this sales invoice (Admin Only)"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Invoice
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -4514,11 +4540,48 @@ Thank you for choosing Majestic Computers!`;
               </button>
             </div>
 
-            {/* Warning Message */}
-            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 text-xs text-rose-950 flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div className="leading-relaxed">
-                Are you sure you want to delete this invoice? This action will reverse the sale and restore stock.
+            {/* Warning & Mode Selector */}
+            <div className="space-y-2">
+              <div className="flex bg-zinc-100 p-1 rounded-xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setDeleteInvoiceMode('void')}
+                  className={`flex-1 py-1.5 px-2 rounded-lg transition-all text-center ${
+                    deleteInvoiceMode === 'void'
+                      ? 'bg-white text-zinc-900 shadow-xs'
+                      : 'text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  Void & Reverse Sale (Restores Stock)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteInvoiceMode('permanent')}
+                  className={`flex-1 py-1.5 px-2 rounded-lg transition-all text-center ${
+                    deleteInvoiceMode === 'permanent'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  Permanently Delete (Purge Record)
+                </button>
+              </div>
+
+              <div className={`p-3 rounded-2xl text-xs flex items-start gap-2.5 border ${
+                deleteInvoiceMode === 'permanent' 
+                  ? 'bg-rose-50 border-rose-200 text-rose-950' 
+                  : 'bg-amber-50 border-amber-200 text-amber-950'
+              }`}>
+                <AlertCircle className={`w-4 h-4 shrink-0 mt-0.5 ${
+                  deleteInvoiceMode === 'permanent' ? 'text-rose-600' : 'text-amber-600'
+                }`} />
+                <div className="leading-relaxed">
+                  {deleteInvoiceMode === 'permanent' ? (
+                    <span><strong>Permanent Purge:</strong> This will completely remove Invoice <strong>#{invoiceToDelete.invoice_no}</strong> from the database. Sold quantities will be restored back to branch stock automatically.</span>
+                  ) : (
+                    <span><strong>Void & Reverse:</strong> This marks Invoice <strong>#{invoiceToDelete.invoice_no}</strong> as void, reverses the revenue from dashboards, and restores all items back to stock inventory.</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -4563,7 +4626,7 @@ Thank you for choosing Majestic Computers!`;
             {/* Reason Input */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-zinc-800 flex items-center justify-between">
-                <span>Deletion Reason (Mandatory):</span>
+                <span>Deletion / Void Reason:</span>
                 <span className="text-[10px] text-zinc-400 font-normal">Audit Log</span>
               </label>
 
@@ -4624,19 +4687,19 @@ Thank you for choosing Majestic Computers!`;
 
               <button
                 type="button"
-                disabled={isDeletingInvoice || !deleteInvoiceReason.trim()}
+                disabled={isDeletingInvoice}
                 onClick={handleConfirmDeleteInvoice}
                 className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-black tracking-wide transition-all shadow-md disabled:opacity-50 cursor-pointer"
               >
                 {isDeletingInvoice ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Voiding & Restoring Stock...</span>
+                    <span>Processing & Restoring Stock...</span>
                   </>
                 ) : (
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>Confirm & Delete Invoice</span>
+                    <span>{deleteInvoiceMode === 'permanent' ? 'Permanently Delete' : 'Confirm & Void Invoice'}</span>
                   </>
                 )}
               </button>
